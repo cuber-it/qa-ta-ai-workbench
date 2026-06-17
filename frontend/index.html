@@ -1,0 +1,660 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>QATAKI</title>
+  <link rel="stylesheet" href="/css/app.css">
+  <script defer src="/js/app.js"></script>
+  <script defer src="/vendor/alpine.min.js"></script>
+</head>
+<body x-data="app()">
+  <div id="app">
+
+    <!-- Bar 1 -->
+    <header class="bar bar-top">
+      <div class="menu" @click.outside="menuOpen = false">
+        <button class="menu-btn" @click="menuOpen = !menuOpen" aria-label="Menü">☰</button>
+        <div class="menu-list" x-show="menuOpen" x-cloak>
+          <button class="menu-item" @click="loadProject()">Projekt laden</button>
+          <hr class="menu-sep">
+          <button class="menu-item" @click="openSettings()">Einstellungen</button>
+          <hr class="menu-sep">
+          <button class="menu-item" @click="openAbout()">Über QATAKI</button>
+        </div>
+      </div>
+      <span class="brand">QATAKI</span>
+      <span class="brand-project" x-show="activeProject" x-cloak x-text="activeProject && activeProject.name"></span>
+
+      <div class="bar-right">
+        <span class="bar-model" x-show="activeModelLabel" x-cloak x-text="activeModelLabel" title="Aktives Modell dieses Runs"></span>
+        <span class="bar-status" x-text="barStatusText"></span>
+        <span class="conn-bubble" :class="statusClass" :title="statusTitle"></span>
+        <button type="button" class="btn-notaus" :class="{ 'is-active': emergency.active }"
+                @click="emergency.active ? confirmResume() : triggerEmergency()"
+                :title="emergency.active ? 'NOTAUS aktiv, klicken zum Aufheben' : 'Alle LLM-Calls sofort stoppen'">
+          <span x-show="!emergency.active">NOTAUS</span>
+          <span x-show="emergency.active" x-cloak>NOTAUS AKTIV</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Sidebar + Main -->
+    <div class="body">
+      <aside class="sidebar">
+        <div class="side-head">
+          <span>Projekte</span>
+          <button class="btn-icon" title="Neues Projekt" @click="createProject()">+</button>
+        </div>
+        <ul class="nav-list" x-show="projects.length">
+          <template x-for="p in projects" :key="p.id">
+            <li class="nav-item" :class="{ active: activeProject && activeProject.id === p.id }"
+                @click="selectProject(p)">
+              <span class="nav-label" x-text="p.name"></span>
+              <span class="nav-actions">
+                <button class="nav-edit" title="Projekt umbenennen" @click.stop="renameProject(p)">✎</button>
+                <button class="nav-del" title="Projekt löschen" @click.stop="deleteProject(p)">×</button>
+              </span>
+            </li>
+          </template>
+        </ul>
+        <p class="muted" x-show="projects.length === 0">Noch keine Projekte.</p>
+
+        <template x-if="activeProject">
+          <div class="runs-box">
+            <div class="side-head">
+              <span>Runs</span>
+              <button class="btn-icon" title="Neuer Run" @click="newRun()">+</button>
+            </div>
+            <ul class="nav-list" x-show="runs.length">
+              <template x-for="r in runs" :key="r.id">
+                <li class="nav-item" :class="{ active: activeRunId === r.id }" @click="openRun(r)">
+                  <span class="nav-label" x-text="runLabel(r)"></span>
+                  <span class="nav-actions">
+                    <button class="nav-edit" title="Run bearbeiten" @click.stop="openRunEdit(r)">✎</button>
+                    <button class="run-rerun" title="Lauf wiederholen" @click.stop="rerunRun(r)">↻</button>
+                    <button class="nav-del" title="Run löschen" @click.stop="deleteRun(r)">×</button>
+                  </span>
+                </li>
+              </template>
+            </ul>
+            <p class="muted" x-show="runs.length === 0">Noch keine Runs.</p>
+          </div>
+        </template>
+      </aside>
+
+      <main class="main">
+        <section class="pane pane-dialog">
+          <h2 class="pane-title">Dialog</h2>
+          <div class="chat" x-ref="chat">
+            <template x-for="(m, i) in dialog" :key="i">
+              <div class="msg" :class="'msg-' + m.role">
+                <div class="msg-body" x-text="m.text"></div>
+                <button class="copy-btn" x-data="{c:false}"
+                        @click.stop="copy(m.text); c=true; setTimeout(()=>c=false,1200)"
+                        x-text="c ? '✓' : '⧉'" :title="c ? 'kopiert' : 'kopieren'"></button>
+              </div>
+            </template>
+            <div class="thinking" x-show="agentRunning" x-cloak>
+              <span class="thinking-dots"><i></i><i></i><i></i></span>
+              <span class="thinking-text" x-text="agentStatus || 'läuft…'"></span>
+            </div>
+            <p class="muted" x-show="dialog.length === 0 && activeProject">Noch keine Nachrichten. Stell dem Agenten eine Aufgabe.</p>
+            <p class="muted" x-show="!activeProject">Wähle oder erstelle links ein Projekt, um einen Run zu starten.</p>
+          </div>
+          <div class="composer">
+            <textarea class="composer-input" rows="2" x-model="agentInput"
+              :placeholder="!activeProject ? 'Erst ein Projekt wählen…' : (!activeRunId ? 'Erst einen Run anlegen oder wählen…' : 'Aufgabe an den Agenten…  (Enter sendet, Shift+Enter = Zeilenumbruch)')"
+              @keydown.enter.prevent="sendAgent()"
+              @keydown.shift.enter.stop
+              :disabled="agentRunning || !activeRunId"></textarea>
+            <button class="btn btn-primary composer-send" @click="sendAgent()"
+              :disabled="agentRunning || !activeRunId || !agentInput.trim()">
+              <span x-show="!agentRunning">Senden</span>
+              <span x-show="agentRunning" x-cloak>läuft…</span>
+            </button>
+          </div>
+        </section>
+        <section class="pane pane-output">
+          <h2 class="pane-title">
+            Ausgabe
+            <span class="pane-meta" x-show="agentStatus" x-cloak x-text="agentStatus"></span>
+          </h2>
+          <div class="quad-grid">
+
+            <div class="quad">
+              <div class="quad-title">
+                <span>Aktivität<span class="live-dot" x-show="agentRunning" x-cloak></span></span>
+                <button class="quad-action" x-show="toolLog.length"
+                        @click="toggleAllActivity()"
+                        x-text="allActivityCollapsed ? 'alle auf' : 'alle zu'"></button>
+              </div>
+              <div class="quad-body">
+                <div class="toollog">
+                  <template x-for="(t, i) in toolLog" :key="i">
+                    <div class="tool-entry" :class="{ 'tool-error': t.is_error }">
+                      <div class="tool-head" @click="t.collapsed = !t.collapsed">
+                        <span class="tool-head-left">
+                          <span class="tool-caret" x-text="t.collapsed ? '▸' : '▾'"></span>
+                          <span class="tool-name" x-text="t.name || 'Ergebnis'"></span>
+                        </span>
+                        <span class="tool-status"
+                              :class="t.result === null ? 'is-run' : (t.is_error ? 'is-err' : 'is-ok')"
+                              x-text="t.result === null ? '…' : (t.is_error ? 'Fehler' : 'ok')"></span>
+                      </div>
+                      <div x-show="!t.collapsed">
+                        <div class="tool-arg" x-show="t.input" x-text="t.input"></div>
+                        <div class="tool-payload-wrap" x-show="t.result !== null">
+                          <button class="copy-btn copy-btn-pay" x-data="{c:false}"
+                                  @click.stop="copy(t.result); c=true; setTimeout(()=>c=false,1200)"
+                                  x-text="c ? '✓' : '⧉'" :title="c ? 'kopiert' : 'kopieren'"></button>
+                          <pre class="tool-payload" x-text="t.result"></pre>
+                        </div>
+                      </div>
+                    </div>
+                  </template>
+                  <p class="muted" x-show="toolLog.length === 0">Tool-Aufrufe erscheinen hier.</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="quad">
+              <div class="quad-title">Kontext</div>
+              <div class="quad-body">
+                <ul class="skill-list" x-show="skills.length">
+                  <template x-for="s in skills" :key="s.name">
+                    <li class="skill-item">
+                      <span class="skill-name" x-text="s.name"></span>
+                      <span class="skill-when" x-text="s.when_to_use"></span>
+                    </li>
+                  </template>
+                </ul>
+                <p class="muted" x-show="!skills.length">Keine Skills geladen.</p>
+              </div>
+            </div>
+
+            <div class="quad">
+              <div class="quad-title">Artefakte</div>
+              <div class="quad-body">
+                <ul class="art-list" x-show="artifacts.length">
+                  <template x-for="(a, i) in artifacts" :key="i">
+                    <li class="art-item" @dblclick="openArtifact(a)" :title="'Doppelklick öffnet ' + a.name">
+                      <span class="art-name" x-text="a.name"></span>
+                      <span class="art-size" x-text="fmtSize(a.size)"></span>
+                    </li>
+                  </template>
+                </ul>
+                <p class="muted" x-show="!artifacts.length">Screenshots, Videos, .feature-Dateien dieses Runs erscheinen hier (Doppelklick öffnet).</p>
+              </div>
+            </div>
+
+            <div class="quad">
+              <div class="quad-title">Lauf</div>
+              <div class="quad-body">
+                <p class="muted" x-show="!agentStatus && !agentCosts">Status und Kosten erscheinen hier.</p>
+                <p x-show="agentStatus" x-cloak><span class="muted">Status:</span> <span x-text="agentStatus"></span></p>
+                <div class="run-costs" x-show="agentCosts" x-cloak x-text="costLine"></div>
+              </div>
+            </div>
+
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <!-- Bar 2 (reserviert) -->
+    <footer class="bar bar-bottom"></footer>
+
+  </div>
+
+  <!-- Über QATAKI -->
+  <div class="modal-overlay" x-show="aboutOpen" x-cloak @click.self="aboutOpen = false">
+    <div class="modal">
+      <div class="modal-head">
+        <span>Über QATAKI</span>
+        <button class="btn-icon" @click="aboutOpen = false">×</button>
+      </div>
+      <div class="modal-body">
+        <p><strong>QATAKI</strong> — QA Test Automation Workbench.</p>
+        <p class="muted">Agentengestütztes Erkunden, Testen und Erzeugen von Test-Artefakten.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Neuer Run -->
+  <div class="modal-overlay" x-show="runModalOpen" x-cloak @click.self="runModalOpen = false">
+    <div class="modal">
+      <div class="modal-head">
+        <span>Neuer Run</span>
+        <button class="btn-icon" @click="runModalOpen = false">×</button>
+      </div>
+      <div class="modal-body">
+        <label class="field">
+          <span class="field-label">Name</span>
+          <input type="text" x-model="newRunForm.name" @keydown.enter="submitNewRun()">
+        </label>
+        <label class="field">
+          <span class="field-label">URL</span>
+          <input type="text" x-model="newRunForm.url" placeholder="leer = Projekt-URL">
+        </label>
+        <label class="field">
+          <span class="field-label">Provider</span>
+          <select x-model="newRunForm.provider" @change="newRunForm.model = ''">
+            <option value="">(Projekt-Default)</option>
+            <template x-for="p in settings.providers" :key="p">
+              <option :value="p" x-text="p"></option>
+            </template>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field-label">Modell</span>
+          <select x-model="newRunForm.model">
+            <option value="">(Provider-Standard)</option>
+            <template x-for="m in modelsFor(newRunForm.provider)" :key="m">
+              <option :value="m" x-text="m"></option>
+            </template>
+          </select>
+        </label>
+        <label class="field" title="Temperatur: steuert die Zufälligkeit der Antwort.&#10;0–0.3: präzise, deterministisch (Code, Tests, Fakten).&#10;0.7–1.0: kreativer/variabler; ab ~1.2 oft wirr.">
+          <span class="field-label">Temperatur</span>
+          <input type="number" min="0" max="2" step="0.1" x-model="newRunForm.temperature" placeholder="leer = global">
+        </label>
+        <label class="field field-check">
+          <input type="checkbox" x-model="newRunForm.headless">
+          <span class="field-label">Headless (Browser unsichtbar)</span>
+        </label>
+        <label class="field">
+          <span class="field-label">Beschreibung</span>
+          <textarea rows="2" x-model="newRunForm.description"></textarea>
+        </label>
+        <label class="field">
+          <span class="field-label">Artefakt-Ordner</span>
+          <input type="text" x-model="newRunForm.artifacts_path" placeholder="leer = Projekt-Default">
+        </label>
+        <div class="modal-actions">
+          <button class="btn" @click="runModalOpen = false">Abbrechen</button>
+          <button class="btn btn-primary" :disabled="!newRunForm.name.trim()" @click="submitNewRun()">Run starten</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Run bearbeiten -->
+  <div class="modal-overlay" x-show="runEditOpen" x-cloak @click.self="runEditOpen = false">
+    <div class="modal">
+      <div class="modal-head">
+        <span>Run bearbeiten</span>
+        <button class="btn-icon" @click="runEditOpen = false">×</button>
+      </div>
+      <div class="modal-body">
+        <label class="field">
+          <span class="field-label">Name</span>
+          <input type="text" x-model="editRun.title" @keydown.enter="submitRunEdit()">
+        </label>
+        <label class="field">
+          <span class="field-label">URL</span>
+          <input type="text" x-model="editRun.url">
+        </label>
+        <label class="field">
+          <span class="field-label">Provider</span>
+          <select x-model="editRun.provider" @change="editRun.model = ''">
+            <option value="">(Projekt-Default)</option>
+            <template x-for="p in settings.providers" :key="p">
+              <option :value="p" x-text="p"></option>
+            </template>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field-label">Modell</span>
+          <select x-model="editRun.model">
+            <option value="">(Provider-Standard)</option>
+            <template x-for="m in modelsFor(editRun.provider)" :key="m">
+              <option :value="m" x-text="m"></option>
+            </template>
+          </select>
+        </label>
+        <label class="field" title="Temperatur: steuert die Zufälligkeit der Antwort.&#10;0–0.3: präzise, deterministisch (Code, Tests, Fakten).&#10;0.7–1.0: kreativer/variabler; ab ~1.2 oft wirr.">
+          <span class="field-label">Temperatur</span>
+          <input type="number" min="0" max="2" step="0.1" x-model="editRun.temperature" placeholder="leer = global">
+        </label>
+        <label class="field">
+          <span class="field-label">Beschreibung</span>
+          <textarea rows="2" x-model="editRun.description"></textarea>
+        </label>
+        <div class="modal-actions">
+          <button class="btn" @click="runEditOpen = false">Abbrechen</button>
+          <button class="btn btn-primary" @click="submitRunEdit()">Speichern</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Neues Projekt -->
+  <div class="modal-overlay" x-show="newProjectOpen" x-cloak @click.self="newProjectOpen = false">
+    <div class="modal">
+      <div class="modal-head">
+        <span>Neues Projekt</span>
+        <button class="btn-icon" @click="newProjectOpen = false">×</button>
+      </div>
+      <div class="modal-body">
+        <label class="field">
+          <span class="field-label">Name</span>
+          <input type="text" x-model="newProject.name" placeholder="Projektname"
+                 @input="onProjectName()" @keydown.enter="submitNewProject()">
+        </label>
+        <label class="field">
+          <span class="field-label">Basis-URL</span>
+          <input type="text" x-model="newProject.base_url" placeholder="https://…">
+        </label>
+        <label class="field">
+          <span class="field-label">Beschreibung</span>
+          <textarea rows="2" x-model="newProject.description"></textarea>
+        </label>
+        <label class="field">
+          <span class="field-label">Artefakt-Speicherort</span>
+          <input type="text" x-model="newProject.artifacts_path" placeholder="z. B. ~/.qataki"
+                 @input="artifactsTouched = true">
+        </label>
+        <label class="field">
+          <span class="field-label">Default-Provider</span>
+          <select x-model="newProject.default_provider">
+            <option value="">(global)</option>
+            <template x-for="p in settings.providers" :key="p">
+              <option :value="p" x-text="p"></option>
+            </template>
+          </select>
+        </label>
+        <div class="modal-actions">
+          <button class="btn" @click="newProjectOpen = false">Abbrechen</button>
+          <button class="btn btn-primary" :disabled="!newProject.name.trim()" @click="submitNewProject()">Anlegen</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings -->
+  <div class="modal-overlay" x-show="settingsOpen" x-cloak @click.self="settingsOpen = false">
+    <div class="modal modal-lg">
+      <div class="modal-head">
+        <span>Settings</span>
+        <button class="btn-icon" @click="settingsOpen = false">×</button>
+      </div>
+
+      <div class="tabs">
+        <button class="tab" :class="{ active: activeTab === 'llm' }" @click="activeTab = 'llm'">LLM</button>
+        <button class="tab" :class="{ active: activeTab === 'kosten' }" @click="activeTab = 'kosten'; loadKosten()">Kosten</button>
+        <button class="tab" :class="{ active: activeTab === 'mcp' }" @click="activeTab = 'mcp'; loadMcp()">MCP</button>
+        <button class="tab" :class="{ active: activeTab === 'agent' }" @click="activeTab = 'agent'">Agent</button>
+      </div>
+
+      <div class="modal-body" x-show="activeTab === 'llm'">
+        <label class="field">
+          <span class="field-label">Provider</span>
+          <select x-model="settings.provider_type" @change="settings.model = ''">
+            <template x-for="p in settings.providers" :key="p">
+              <option :value="p" x-text="p + (settings.key_present[p] ? '  ✓ Key' : '  (kein Key)')"></option>
+            </template>
+          </select>
+        </label>
+        <p class="hint" x-show="!keyOk" x-cloak>Kein API-Key für diesen Provider in <code>.env</code>.</p>
+
+        <label class="field">
+          <span class="field-label">Modell</span>
+          <select x-model="settings.model">
+            <option value="">(Provider-Standard)</option>
+            <template x-for="m in modelsFor(settings.provider_type)" :key="m">
+              <option :value="m" x-text="m"></option>
+            </template>
+          </select>
+        </label>
+
+        <div class="field-row">
+          <label class="field">
+            <span class="field-label">max_tokens</span>
+            <input type="number" min="1" x-model.number="settings.max_tokens">
+          </label>
+          <label class="field" title="Temperatur: steuert die Zufälligkeit der Antwort.&#10;0–0.3: präzise, deterministisch (Code, Tests, Fakten).&#10;0.7–1.0: kreativer/variabler; ab ~1.2 oft wirr.">
+            <span class="field-label">Temperature</span>
+            <input type="number" min="0" max="2" step="0.1" x-model.number="settings.temperature">
+          </label>
+        </div>
+
+        <div class="modal-actions">
+          <span class="saved-hint" x-show="saved" x-cloak>Gespeichert&nbsp;✓</span>
+          <button class="btn btn-primary" @click="saveSettings()">Speichern</button>
+        </div>
+      </div>
+
+      <div class="modal-body" x-show="activeTab === 'agent'" x-cloak>
+        <p class="hint">Eigene Lauf-Parameter für den Agenten. Provider/Modell kommen aus dem LLM-Tab.</p>
+        <div class="field-row">
+          <label class="field">
+            <span class="field-label">agent_max_tokens</span>
+            <input type="number" min="256" step="256" x-model.number="settings.agent_max_tokens">
+          </label>
+          <label class="field" title="Temperatur: steuert die Zufälligkeit der Antwort.&#10;0–0.3: präzise, deterministisch (Code, Tests, Fakten).&#10;0.7–1.0: kreativer/variabler; ab ~1.2 oft wirr.">
+            <span class="field-label">Temperature</span>
+            <input type="number" min="0" max="2" step="0.1" x-model.number="settings.agent_temperature">
+          </label>
+        </div>
+        <label class="field">
+          <span class="field-label">max_iterations</span>
+          <input type="number" min="1" max="100" x-model.number="settings.agent_max_iterations">
+        </label>
+        <p class="hint">Output-Cap pro Antwort. 16K ≈ 1&nbsp;Cent bei gpt-4o-mini; höher = weniger Risiko abgeschnittener Antworten.</p>
+        <div class="modal-actions">
+          <span class="saved-hint" x-show="saved" x-cloak>Gespeichert&nbsp;✓</span>
+          <button class="btn btn-primary" @click="saveSettings()">Speichern</button>
+        </div>
+      </div>
+
+      <div class="modal-body" x-show="activeTab === 'kosten'" x-cloak>
+        <!-- Budget -->
+        <div class="kosten-sec">
+          <span class="field-label">Budget</span>
+          <div class="bar-line">
+            <span class="bar-cap">Heute&nbsp;· Tokens</span>
+            <div class="pbar"><div class="pbar-fill" :style="`width:${budget.day?.tokens_pct||0}%`"></div></div>
+            <span class="bar-val" x-text="`${(budget.day?.tokens||0).toLocaleString()} / ${(budget.day?.limit_tokens||0).toLocaleString()}`"></span>
+          </div>
+          <div class="bar-line">
+            <span class="bar-cap">Heute&nbsp;· USD</span>
+            <div class="pbar"><div class="pbar-fill" :style="`width:${budget.day?.usd_pct||0}%`"></div></div>
+            <span class="bar-val" x-text="`≈ $${(budget.day?.usd||0).toFixed(4)} / $${(budget.day?.limit_usd||0).toFixed(2)}`"></span>
+          </div>
+          <div class="bar-line">
+            <span class="bar-cap">Monat&nbsp;· USD</span>
+            <div class="pbar"><div class="pbar-fill" :style="`width:${budget.month?.usd_pct||0}%`"></div></div>
+            <span class="bar-val" x-text="`≈ $${(budget.month?.usd||0).toFixed(4)} / $${(budget.month?.limit_usd||0).toFixed(2)}`"></span>
+          </div>
+        </div>
+
+        <!-- Limits (sofort wirksam, persistent) -->
+        <div class="kosten-sec">
+          <span class="field-label">Limits (wirkt ab nächstem Run)</span>
+          <label class="field">
+            <span class="field-label">Hard-Token-Limit / Run</span>
+            <input type="number" min="1000" step="1000" x-model.number="budgetForm.max_tokens_per_run">
+          </label>
+          <label class="field">
+            <span class="field-label">Soft-Warnung / Run</span>
+            <input type="number" min="0" step="1000" x-model.number="budgetForm.soft_tokens_per_run">
+          </label>
+          <label class="field">
+            <span class="field-label">Max USD / Run</span>
+            <input type="number" min="0" step="0.1" x-model.number="budgetForm.max_usd_per_run">
+          </label>
+          <label class="field">
+            <span class="field-label">Token-Limit / Tag</span>
+            <input type="number" min="1000" step="10000" x-model.number="budgetForm.max_tokens_per_day">
+          </label>
+          <div class="modal-actions">
+            <span class="muted" x-show="budgetSaved" x-cloak>gespeichert ✓</span>
+            <button class="btn btn-primary" @click="saveBudget()">Limits speichern</button>
+          </div>
+        </div>
+
+        <!-- Übersicht -->
+        <div class="kosten-sec">
+          <div class="sec-head">
+            <span class="field-label">Übersicht</span>
+            <select class="mini-select" x-model="kostenPeriod" @change="loadOverview()">
+              <option value="today">Heute</option>
+              <option value="month">Monat</option>
+              <option value="all">Gesamt</option>
+            </select>
+          </div>
+          <p class="muted" x-show="(overview.by_model||[]).length === 0">Noch keine Aufrufe.</p>
+          <table class="cost-table" x-show="(overview.by_model||[]).length > 0" x-cloak>
+            <thead><tr><th>Modell</th><th>Calls</th><th>Tokens</th><th>≈&nbsp;USD</th></tr></thead>
+            <tbody>
+              <template x-for="m in overview.by_model" :key="m.model">
+                <tr>
+                  <td x-text="m.model"></td>
+                  <td x-text="m.calls"></td>
+                  <td x-text="(m.total_tokens||0).toLocaleString()"></td>
+                  <td x-text="'$'+(m.cost_usd||0).toFixed(6)"></td>
+                </tr>
+              </template>
+            </tbody>
+            <tfoot x-show="overview.totals" x-cloak>
+              <tr>
+                <td>Summe</td>
+                <td x-text="overview.totals?.calls"></td>
+                <td x-text="(overview.totals?.total_tokens||0).toLocaleString()"></td>
+                <td x-text="'$'+(overview.totals?.cost_usd||0).toFixed(6)"></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+
+        <!-- Preise -->
+        <div class="kosten-sec">
+          <div class="sec-head">
+            <span class="field-label">Preise</span>
+            <button class="btn" @click="refreshPricing()" :disabled="refreshing">
+              <span x-show="!refreshing">Preise aktualisieren</span>
+              <span x-show="refreshing" x-cloak>läuft…</span>
+            </button>
+          </div>
+          <p class="muted" x-text="`Quelle: ${pricingStatus.update_source||'builtin'} · ${pricingStatus.model_count||0} Modelle · Stand: ${pricingStatus.updated_at||'—'}`"></p>
+          <p class="hint" x-show="refreshMsg" x-cloak x-text="refreshMsg"></p>
+
+          <div class="pending-box" x-show="pending" x-cloak>
+            <span class="field-label">Vorgeschlagene Änderungen (<span x-text="pending?.changes?.length||0"></span>)</span>
+            <table class="cost-table">
+              <thead><tr><th>Modell</th><th>alt (in/out)</th><th>neu (in/out)</th></tr></thead>
+              <tbody>
+                <template x-for="c in (pending?.changes||[])" :key="c.model">
+                  <tr>
+                    <td x-text="c.model"></td>
+                    <td x-text="`${c.old_prompt}/${c.old_completion}`"></td>
+                    <td x-text="`${c.new_prompt}/${c.new_completion}`"></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+            <div class="modal-actions">
+              <button class="btn" @click="rejectPricing()">Verwerfen</button>
+              <button class="btn btn-primary" @click="applyPricing()">Übernehmen</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-body" x-show="activeTab === 'mcp'" x-cloak>
+        <!-- Server hinzufügen -->
+        <div class="kosten-sec">
+          <span class="field-label">MCP-Server hinzufügen</span>
+          <div class="field-row">
+            <label class="field" style="flex:0 0 32%">
+              <span class="field-label">Name</span>
+              <input type="text" x-model="mcpForm.name" placeholder="z.B. playwright">
+            </label>
+            <label class="field">
+              <span class="field-label">URL</span>
+              <input type="text" x-model="mcpForm.url" placeholder="http://host:port/mcp">
+            </label>
+          </div>
+          <div class="field-row">
+            <label class="field" style="flex:0 0 32%">
+              <span class="field-label">Transport</span>
+              <select x-model="mcpForm.transport">
+                <option value="http">http</option>
+                <option value="sse">sse</option>
+              </select>
+            </label>
+            <label class="field">
+              <span class="field-label">Auth-Token (optional)</span>
+              <input type="password" x-model="mcpForm.auth_token" placeholder="Bearer-Token, falls nötig">
+            </label>
+          </div>
+          <div class="modal-actions">
+            <span class="hint" x-show="mcpMsg" x-cloak x-text="mcpMsg"></span>
+            <button class="btn btn-primary" @click="addMcpServer()">Hinzufügen</button>
+          </div>
+        </div>
+
+        <!-- Server-Liste -->
+        <div class="kosten-sec">
+          <span class="field-label">Server</span>
+          <p class="muted" x-show="Object.keys(mcp.servers||{}).length === 0">Noch keine Server. Trag oben eine HTTP-URL ein.</p>
+          <table class="cost-table" x-show="Object.keys(mcp.servers||{}).length > 0" x-cloak>
+            <thead><tr><th>Primär</th><th>Name</th><th>Transp.</th><th>URL</th><th></th></tr></thead>
+            <tbody>
+              <template x-for="(s, name) in mcp.servers" :key="name">
+                <tr>
+                  <td><input type="radio" :checked="mcp.primary === name" @change="setMcpPrimary(name)"></td>
+                  <td x-text="name + (s.has_auth ? ' 🔒' : '')"></td>
+                  <td x-text="s.transport"></td>
+                  <td class="mono" x-text="s.url"></td>
+                  <td class="row-actions">
+                    <button class="btn-sm" @click="loadMcpTools(name)">Tools</button>
+                    <button class="btn-sm" @click="testMcpServer(name)">Test</button>
+                    <button class="btn-sm danger" @click="removeMcpServer(name)">×</button>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+          <p class="hint" x-show="mcpTestMsg" x-cloak x-text="mcpTestMsg"></p>
+        </div>
+
+        <!-- Tools + Tester -->
+        <div class="kosten-sec" x-show="mcpToolsFor" x-cloak>
+          <div class="sec-head">
+            <span class="field-label">Tools — <span x-text="mcpToolsFor"></span></span>
+          </div>
+          <p class="muted" x-show="mcpTools.length === 0">Keine Tools / nicht erreichbar.</p>
+          <table class="cost-table" x-show="mcpTools.length > 0" x-cloak>
+            <thead><tr><th>Tool</th><th>Beschreibung</th><th></th></tr></thead>
+            <tbody>
+              <template x-for="t in mcpTools" :key="t.name">
+                <tr>
+                  <td class="mono" x-text="t.name"></td>
+                  <td x-text="t.description"></td>
+                  <td><button class="btn-sm" @click="pickMcpTool(t)">wählen</button></td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+
+          <div class="pending-box" x-show="mcpCall.tool" x-cloak>
+            <span class="field-label">Ausführen: <span class="mono" x-text="mcpCall.tool"></span></span>
+            <label class="field">
+              <span class="field-label">Argumente (JSON)</span>
+              <textarea rows="3" x-model="mcpCall.args" class="code-area"></textarea>
+            </label>
+            <div class="modal-actions">
+              <button class="btn btn-primary" @click="runMcpTool(mcpToolsFor)" :disabled="mcpCall.running">
+                <span x-show="!mcpCall.running">Ausführen</span><span x-show="mcpCall.running" x-cloak>läuft…</span>
+              </button>
+            </div>
+            <pre class="result-box" x-show="mcpCall.result !== null" x-cloak x-text="mcpCall.result"></pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

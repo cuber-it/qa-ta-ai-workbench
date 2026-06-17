@@ -1,0 +1,50 @@
+# ── Python ────────────────────────────────────────────────────────────────────
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+
+# ── Environment ───────────────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Interne Dokumente (nie ins Repo) ─────────────────────────────────────────
+CLAUDE.md
+.claude/
+docs/intern/
+doc/
+
+# ── QATAKI Runtime-Daten ─────────────────────────────────────────────────────
+artifacts/
+memory/
+reports/
+logs/
+
+# ── Frontend Build ────────────────────────────────────────────────────────────
+frontend/dist/
+frontend/build/
+frontend/.vite/
+frontend/node_modules/
+node_modules/
+
+# ── OS / IDE ──────────────────────────────────────────────────────────────────
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# ── Docker Runtime ────────────────────────────────────────────────────────────
+config/.env
+data/
+
+# Archiv des alten Codes (nicht getrackt)
+_archive/
