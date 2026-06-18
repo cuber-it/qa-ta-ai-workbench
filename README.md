@@ -2,13 +2,26 @@
 
 Quality Assurance, Test Automation, AI.
 
-A workbench for designing REST and GUI tests together with an AI agent. You set up a
-project, point the agent at a web application, and it explores the app and drafts a
-readable, tool-agnostic test description — a Gherkin `.feature` — saved as a run
-artifact. Runs, their protocol, and their artifacts are kept per project, so you can
-review them, re-run them, and track cost.
+QATAKI is my personal playground for ideas about how an AI agent, QA, and test
+automation fit together. I use it to think through new concepts, rediscover old
+ones, and reconstruct established approaches from first principles. Pulling a known
+approach apart and building it back up is how I get to the bottom of why it works
+and where it breaks.
 
-See [CONCEPT.md](CONCEPT.md) for the rationale and architecture.
+For that reason it will never be a finished solution. What lives here is whatever
+state the current experiment happens to be in, and that state can look quite
+different from yesterday's. Some days it grows a feature; some days it changes its
+mind about what it wants to be.
+
+One question stays constant underneath all the churn: how can AI make the everyday
+work of running QA and building test automation more modern, more effective, and
+more pleasant? Two limits stay just as constant. I keep the reins, and the AI never
+runs the show. The AI's rough edges stay in the workshop, and they don't get to
+leak into the result and ruin the day. The AI helps author and maintain; whatever
+test comes out the other end is meant to be plain, deterministic, and able to stand
+on its own without a model in the loop.
+
+See [CONCEPT.md](CONCEPT.md) for the current thinking. That changes too.
 
 ## Quickstart
 
@@ -22,19 +35,28 @@ cp .env.example .env                                # then add your LLM API key(
 
 Then open <http://127.0.0.1:12288>.
 
-## Status
+## What this is, and what it isn't
 
-**0.1.0 — first usable release.** The agentic workbench runs end to end: create projects
-and runs, drive an LLM agent over a web application with Playwright tools, produce
-`.feature` artifacts, attach external capabilities via MCP servers, manage settings, and
-track cost per run.
+- A lab for QA/TA-with-AI ideas, built and run on my own homelab, for myself.
+- Not a product, not a stable API, not a roadmap I owe anyone. Expect sharp turns
+  and the occasional rewrite.
+- Possibly useful to you anyway. Take what helps, ignore the rest.
 
-## Roadmap
+## Where it is right now
 
-- Structured `.steps` tables alongside the `.feature`, as a first-class authoring flow.
-- Ingesting existing Playwright scripts (including codegen output) and lifting them into
-  the same format for an AI-assisted re-run.
-- Per-project skills and configurable tool-sets, editable from the UI.
+The `v0.1.0` tag is one snapshot: an agentic workbench that creates projects and
+runs, drives an LLM over a web application with Playwright tools, produces readable
+`.feature` artifacts, attaches capabilities over MCP, and tracks cost per run. The
+branch you are looking at may already have wandered off somewhere else.
+
+## Directions I'm poking at (no promises)
+
+- Readable, tool-agnostic test artifacts that export to runnable code and re-import
+  cleanly.
+- AI as an author and maintainer in the workshop, kept out of the deterministic
+  result and out of CI.
+- Keyword/step layering, structured step tables, and lifting existing scripts into
+  the same format.
 
 ## License
 
