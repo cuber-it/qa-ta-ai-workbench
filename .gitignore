@@ -20,7 +20,7 @@ build/
 # ── Interne Dokumente (nie ins Repo) ─────────────────────────────────────────
 CLAUDE.md
 .claude/
-docs/intern/
+**/docs/intern/
 doc/
 
 # ── QATAKI Runtime-Daten ─────────────────────────────────────────────────────

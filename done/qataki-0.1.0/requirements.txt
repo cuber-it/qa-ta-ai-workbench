@@ -1,0 +1,15 @@
+# QATAKI runtime dependencies (tested versions for 0.1.0)
+fastapi==0.136.1
+uvicorn==0.47.0
+pydantic==2.13.4
+mcp==1.27.1
+
+# Local building blocks from this monorepo's shelf/ (installed from path, no PyPI).
+# Run pip from the repo root so these relative paths resolve.
+../../shelf/playwright-driver
+../../shelf/llm-provider
+../../shelf/llm-cost
+../../shelf/agent-core
+
+# After install, fetch the browser binary used by the Playwright tools:
+#   python -m playwright install chromium
