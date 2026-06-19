@@ -111,7 +111,7 @@
       <main class="main">
         <section class="pane pane-dialog" data-fl="dialog"
                  :class="{ floating: isFloating('dialog'), 'is-hidden': !isVisible('dialog') }"
-                 :style="floaterStyle('dialog')">
+                 :style="quadStyle('dialog')">
           <button class="fl-pin" @click.stop="togglePin('dialog')" :title="isFloating('dialog') ? 'Andocken' : 'Lösen (frei platzieren)'" x-text="isFloating('dialog') ? '📍' : '📌'"></button>
           <h2 class="pane-title" @mousedown="floaterDown('dialog', $event)">
             <span class="fl-grip" x-show="isFloating('dialog')" x-cloak title="Ziehen">⠿</span>
@@ -159,15 +159,14 @@
           </div>
           <div class="fl-resize" x-show="isFloating('dialog')" x-cloak @mousedown="floaterResizeDown('dialog', $event)"></div>
         </section>
-        <section class="pane pane-col">
-          <div class="stack">
+        
 
-            <div class="quad" data-fl="activity" :class="{ floating: isFloating('activity'), 'is-hidden': !isVisible('activity') }" :style="floaterStyle('activity')">
+            <div class="quad" data-fl="activity" :class="{ floating: isFloating('activity'), 'is-hidden': !isVisible('activity') }" :style="quadStyle('activity')">
               <button class="fl-close" @click.stop="closePanel('activity')" title="Schließen">×</button>
               <button class="fl-pin" @click.stop="togglePin('activity')"
                       :title="isFloating('activity') ? 'Andocken' : 'Lösen (frei platzieren)'"
                       x-text="isFloating('activity') ? '📍' : '📌'"></button>
-              <div class="quad-title" @mousedown="floaterDown('activity', $event)">
+              <div class="quad-title" @mousedown="floaterDown('activity', $event)" @dblclick.stop="toggleTileHeight('activity')">
                 <span>Aktivität<span class="live-dot" x-show="agentRunning" x-cloak></span></span>
                 <button class="quad-action" x-show="toolLog.length"
                         @click="toggleAllActivity()"
@@ -205,10 +204,10 @@
                    @mousedown="floaterResizeDown('activity', $event)"></div>
             </div>
 
-            <div class="quad" data-fl="artifacts" :class="{ floating: isFloating('artifacts'), 'is-hidden': !isVisible('artifacts') }" :style="floaterStyle('artifacts')">
+            <div class="quad" data-fl="artifacts" :class="{ floating: isFloating('artifacts'), 'is-hidden': !isVisible('artifacts') }" :style="quadStyle('artifacts')">
               <button class="fl-close" @click.stop="closePanel('artifacts')" title="Schließen">×</button>
               <button class="fl-pin" @click.stop="togglePin('artifacts')" :title="isFloating('artifacts') ? 'Andocken' : 'Lösen (frei platzieren)'" x-text="isFloating('artifacts') ? '📍' : '📌'"></button>
-              <div class="quad-title" @mousedown="floaterDown('artifacts', $event)">Artefakte</div>
+              <div class="quad-title" @mousedown="floaterDown('artifacts', $event)" @dblclick.stop="toggleTileHeight('artifacts')">Artefakte</div>
               <div class="quad-body">
                 <ul class="art-list" x-show="artifacts.length">
                   <template x-for="(a, i) in artifacts" :key="i">
@@ -223,15 +222,13 @@
               <div class="fl-resize" x-show="isFloating('artifacts')" x-cloak @mousedown="floaterResizeDown('artifacts', $event)"></div>
             </div>
 
-          </div>
-        </section>
-        <section class="pane pane-col">
-          <div class="stack">
+          
+        
 
-            <div class="quad quad-ctx" data-fl="context" :class="{ floating: isFloating('context'), 'is-hidden': !isVisible('context') }" :style="floaterStyle('context')">
+            <div class="quad quad-ctx" data-fl="context" :class="{ floating: isFloating('context'), 'is-hidden': !isVisible('context') }" :style="quadStyle('context')">
               <button class="fl-close" @click.stop="closePanel('context')" title="Schließen">×</button>
               <button class="fl-pin" @click.stop="togglePin('context')" :title="isFloating('context') ? 'Andocken' : 'Lösen (frei platzieren)'" x-text="isFloating('context') ? '📍' : '📌'"></button>
-              <div class="quad-title" @mousedown="floaterDown('context', $event)">
+              <div class="quad-title" @mousedown="floaterDown('context', $event)" @dblclick.stop="toggleTileHeight('context')">
                 <span class="fl-grip" x-show="isFloating('context')" x-cloak title="Ziehen">⠿</span>
                 <div class="view-seg">
                   <button class="seg-btn" :class="{on: ctxView==='edit'}" @click="setCtxView('edit')">Bearbeiten</button>
@@ -269,10 +266,10 @@
               <div class="fl-resize" x-show="isFloating('context')" x-cloak @mousedown="floaterResizeDown('context', $event)"></div>
             </div>
 
-            <div class="quad" data-fl="run" :class="{ floating: isFloating('run'), 'is-hidden': !isVisible('run') }" :style="floaterStyle('run')">
+            <div class="quad" data-fl="run" :class="{ floating: isFloating('run'), 'is-hidden': !isVisible('run') }" :style="quadStyle('run')">
               <button class="fl-close" @click.stop="closePanel('run')" title="Schließen">×</button>
               <button class="fl-pin" @click.stop="togglePin('run')" :title="isFloating('run') ? 'Andocken' : 'Lösen (frei platzieren)'" x-text="isFloating('run') ? '📍' : '📌'"></button>
-              <div class="quad-title" @mousedown="floaterDown('run', $event)">Lauf</div>
+              <div class="quad-title" @mousedown="floaterDown('run', $event)" @dblclick.stop="toggleTileHeight('run')">Lauf</div>
               <div class="quad-body">
                 <p class="muted" x-show="!agentStatus && !agentCosts">Status und Kosten erscheinen hier.</p>
                 <p x-show="agentStatus" x-cloak><span class="muted">Status:</span> <span x-text="agentStatus"></span></p>
@@ -281,25 +278,23 @@
               <div class="fl-resize" x-show="isFloating('run')" x-cloak @mousedown="floaterResizeDown('run', $event)"></div>
             </div>
 
-          </div>
-        </section>
-        <section class="pane pane-col">
-          <div class="stack">
+          
+        
 
-            <div class="quad" data-fl="free1" :class="{ floating: isFloating('free1'), 'is-hidden': !isVisible('free1') }" :style="floaterStyle('free1')">
+            <div class="quad" data-fl="free1" :class="{ floating: isFloating('free1'), 'is-hidden': !isVisible('free1') }" :style="quadStyle('free1')">
               <button class="fl-close" @click.stop="closePanel('free1')" title="Schließen">×</button>
               <button class="fl-pin" @click.stop="togglePin('free1')" :title="isFloating('free1') ? 'Andocken' : 'Lösen (frei platzieren)'" x-text="isFloating('free1') ? '📍' : '📌'"></button>
-              <div class="quad-title" @mousedown="floaterDown('free1', $event)">Frei 1</div>
+              <div class="quad-title" @mousedown="floaterDown('free1', $event)" @dblclick.stop="toggleTileHeight('free1')">Frei 1</div>
               <div class="quad-body">
                 <p class="muted">Noch nicht belegt.</p>
               </div>
               <div class="fl-resize" x-show="isFloating('free1')" x-cloak @mousedown="floaterResizeDown('free1', $event)"></div>
             </div>
 
-            <div class="quad quad-log" data-fl="log" :class="{ floating: isFloating('log'), 'is-hidden': !isVisible('log') }" :style="floaterStyle('log')">
+            <div class="quad quad-log" data-fl="log" :class="{ floating: isFloating('log'), 'is-hidden': !isVisible('log') }" :style="quadStyle('log')">
               <button class="fl-close" @click.stop="closePanel('log')" title="Schließen">×</button>
               <button class="fl-pin" @click.stop="togglePin('log')" :title="isFloating('log') ? 'Andocken' : 'Lösen (frei platzieren)'" x-text="isFloating('log') ? '📍' : '📌'"></button>
-              <div class="quad-title" @mousedown="floaterDown('log', $event)">
+              <div class="quad-title" @mousedown="floaterDown('log', $event)" @dblclick.stop="toggleTileHeight('log')">
                 <span class="fl-grip" x-show="isFloating('log')" x-cloak title="Ziehen">⠿</span>
                 <div class="view-seg">
                   <button class="seg-btn" :class="{on: logView==='log'}" @click="setLogView('log')">Log</button>
@@ -352,8 +347,7 @@
               <div class="fl-resize" x-show="isFloating('log')" x-cloak @mousedown="floaterResizeDown('log', $event)"></div>
             </div>
 
-          </div>
-        </section>
+          
       </main>
     </div>
 

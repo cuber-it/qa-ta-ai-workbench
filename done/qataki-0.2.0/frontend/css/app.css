@@ -117,11 +117,15 @@ body {
 /* Main zweigeteilt */
 .main {
   display: grid;
-  grid-template-columns: repeat(4, 25%);
+  grid-template-columns: repeat(4, 1fr);
+  grid-template-rows: 1fr 1fr;
+  gap: .6rem;
   min-height: 0;
 }
 .pane { min-height: 0; overflow: auto; padding: .75rem; }
-.pane-dialog { border-right: 1px solid var(--border); }
+/* 4×2-Raster: jede Kachel wird per quadStyle() inline in ihre Zelle gesetzt
+   (Dialog ueberspannt beide Zeilen seiner Spalte). Schwebt eine Kachel,
+   bleibt ihre Zelle leer. */
 .pane-title { margin: 0 0 .5rem; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
 
 .muted { color: var(--muted); }
@@ -145,7 +149,8 @@ body {
 @media (max-width: 760px) {
   .body { grid-template-columns: 1fr; }
   .sidebar { display: none; }
-  .main { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
+  .main { grid-template-columns: 1fr; grid-template-rows: auto; }
+  .main > * { grid-column: auto !important; grid-row: auto !important; }
   .pane-dialog { border-right: none; border-bottom: 1px solid var(--border); }
 }
 

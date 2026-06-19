@@ -241,6 +241,14 @@ function app() {
 
     // --- Floating-Kacheln (Default angedockt; loesbar, frei anordenbar) ---
     floaters: {},        // id -> { floating, x, y, w, h, z }
+    // Raster-Platzierung je Kachel im 4x2-Grid. Dialog belegt eine ganze Spalte
+    // (beide Zeilen), Quads je eine Zelle (Spalte c, Zeile r 1=oben/2=unten).
+    slots: {
+      dialog:   { c: 1 },
+      activity: { c: 2, r: 1 }, artifacts: { c: 2, r: 2 },
+      context:  { c: 3, r: 1 }, run:       { c: 3, r: 2 },
+      free1:    { c: 4, r: 1 }, log:       { c: 4, r: 2 },
+    },
     _floatZ: 100,
     _drag: null,
 
@@ -298,11 +306,16 @@ function app() {
         f.floating = true
         this._bringFront(id)
       } else {
-        // schwebend -> an gewaehlter Stelle andocken (nur Quads in Stacks; Dialog kehrt heim)
-        if (el && el.classList.contains('quad')) {
-          const r = el.getBoundingClientRect()
-          const t = this._dockTarget(r.left + r.width / 2, r.top + 12)
-          if (t) { t.before ? t.stack.insertBefore(el, t.before) : t.stack.appendChild(el) }
+        // schwebend -> andocken. Dialog belegt die ganze Spalte, Quads eine Zelle.
+        // Was im Ziel liegt, wird geloest (schwebt heraus).
+        if (el && id === 'dialog') {
+          const c = this._columnAt(el.getBoundingClientRect())
+          this._occupantsOfColumn(c, 'dialog').forEach(o => this._floatOut(o))
+          this.slots.dialog = { c }
+        } else if (el) {
+          const cell = this._cellAt(el.getBoundingClientRect())
+          this._occupantsOfCell(cell.c, cell.r, id).forEach(o => this._floatOut(o))
+          this.slots[id] = { c: cell.c, r: cell.r }
         }
         f.floating = false
       }
@@ -313,6 +326,30 @@ function app() {
       if (!f || !f.floating) return ''
       const z = id === 'editor' ? 9000 : (f.z || 100)   // Editor immer ganz oben
       return `position:fixed;left:${f.x}px;top:${f.y}px;width:${f.w}px;height:${f.h}px;z-index:${z};`
+    },
+    // Stil je Kachel: schwebend -> position:fixed; angedockt -> Rasterzelle.
+    // Dialog ueberspannt beide Zeilen seiner Spalte.
+    quadStyle(id) {
+      const f = this.floaters[id]
+      if (f && f.floating) return this.floaterStyle(id)
+      const s = this.slots[id] || { c: 2, r: 1 }
+      if (id === 'dialog' || s.full) return `grid-column:${s.c};grid-row:1 / 3;`
+      return `grid-column:${s.c};grid-row:${s.r};`
+    },
+    // Doppelklick auf die Titelzeile eines angedockten Quads: auf volle
+    // Spaltenhoehe (nur wenn die andere Zeile frei ist) bzw. zurueck auf eine Zelle.
+    toggleTileHeight(id) {
+      if (id === 'dialog' || this.isFloating(id)) return
+      const s = this.slots[id]; if (!s) return
+      if (s.full) {
+        this.slots[id] = { c: s.c, r: s.r || 1 }
+      } else {
+        const other = s.r === 1 ? 2 : 1
+        if (this._occupantsOfCell(s.c, other, id).length === 0) {
+          this.slots[id] = { c: s.c, r: s.r, full: true }
+        }
+      }
+      this._saveUi()
     },
     // Editor: eine Bindung steuert Sichtbarkeit UND Position (kein x-show/:style-Konflikt)
     editorStyle() {
@@ -355,47 +392,43 @@ function app() {
       this._saveUi()
     },
 
-    // ── Andocken an frei gewählte Spalten-Position ───────────────────
+    // ── Andocken im 4×2-Raster (Spalte aus x, Zeile aus y) ───────────
     _tileEl(id) { return document.querySelector(`[data-fl="${id}"]`) },
-    _stacks() { return [...document.querySelectorAll('.pane-col .stack')] },
-    // Aus einer Bildschirm-Koordinate Ziel-Spalte (.stack) + Einfüge-Nachbar ermitteln.
-    _dockTarget(cx, cy) {
-      const stacks = this._stacks()
-      if (!stacks.length) return null
-      let stack = stacks.find(s => { const r = s.getBoundingClientRect(); return cx >= r.left && cx < r.right })
-      if (!stack) {  // ausserhalb aller Spalten -> nächstgelegene nach x-Mitte
-        let best = null, bestD = Infinity
-        for (const s of stacks) {
-          const r = s.getBoundingClientRect(), mid = (r.left + r.right) / 2, d = Math.abs(cx - mid)
-          if (d < bestD) { bestD = d; best = s }
-        }
-        stack = best
-      }
-      if (!stack) return null
-      const docked = [...stack.children].filter(el => el.classList.contains('quad') && !el.classList.contains('floating'))
-      let before = null
-      for (const el of docked) {
-        const r = el.getBoundingClientRect()
-        if (cy < r.top + r.height / 2) { before = el; break }
-      }
-      return { stack, before }
+    _gridRect() { return document.querySelector('.main').getBoundingClientRect() },
+    _columnAt(rect) {
+      const mr = this._gridRect()
+      const cx = rect.left + rect.width / 2
+      return Math.min(4, Math.max(1, Math.floor((cx - mr.left) / (mr.width / 4)) + 1))
     },
-    // Angedocktes Layout erfassen: pro Spalte die Reihenfolge der angedockten Kachel-IDs.
-    _captureDock() {
-      return this._stacks().map(stack =>
-        [...stack.children]
-          .filter(el => el.classList.contains('quad') && el.dataset.fl && !this.isFloating(el.dataset.fl))
-          .map(el => el.dataset.fl)
-      )
+    _cellAt(rect) {
+      const mr = this._gridRect()
+      const cy = rect.top + rect.height / 2
+      return { c: this._columnAt(rect), r: cy < mr.top + mr.height / 2 ? 1 : 2 }
     },
-    // Gespeichertes Layout nachspielen (DOM-Move in die jeweilige Spalte/Reihenfolge).
-    _applyDock(layout) {
-      if (!Array.isArray(layout)) return
-      const stacks = this._stacks()
-      layout.forEach((ids, ci) => {
-        const stack = stacks[ci]; if (!stack || !Array.isArray(ids)) return
-        ids.forEach(id => { const el = this._tileEl(id); if (el && !this.isFloating(id)) stack.appendChild(el) })
+    // angedockte, sichtbare Kacheln, die Zelle (c,r) belegen
+    // (Dialog belegt beide Zeilen seiner Spalte)
+    _occupantsOfCell(c, r, exceptId) {
+      return Object.keys(this.slots).filter(id => {
+        if (id === exceptId || this.isFloating(id) || !this.isVisible(id)) return false
+        const s = this.slots[id]
+        return (id === 'dialog' || s.full) ? s.c === c : (s.c === c && s.r === r)
       })
+    },
+    // angedockte, sichtbare Kacheln in Spalte c
+    _occupantsOfColumn(c, exceptId) {
+      return Object.keys(this.slots).filter(id =>
+        id !== exceptId && !this.isFloating(id) && this.isVisible(id) && this.slots[id].c === c)
+    },
+    // Kachel an ihrer aktuellen Bildschirmposition loesen (schweben, kein Sprung)
+    _floatOut(id) {
+      const f = this.fl(id); const el = this._tileEl(id)
+      if (el) {
+        const r = el.getBoundingClientRect()
+        f.x = Math.max(0, Math.round(r.left)); f.y = Math.max(0, Math.round(r.top))
+        f.w = Math.round(r.width); f.h = Math.round(r.height)
+      }
+      f.floating = true
+      this._bringFront(id)
     },
     // Panel-Sichtbarkeit
     isVisible(id) { return !this.panelsHidden[id] },
@@ -1212,7 +1245,7 @@ function app() {
           settingsOpen: !!this.settingsOpen,
           activeTab: this.activeTab || 'llm',
           floaters: this.floaters,
-          dock: this._captureDock(),
+          slots: this.slots,
           panelsHidden: this.panelsHidden,
         }))
       } catch (e) {}
@@ -1228,7 +1261,7 @@ function app() {
         for (const k in ui.floaters) { const z = ui.floaters[k] && ui.floaters[k].z; if (z > mx) mx = z }
         this._floatZ = mx
       }
-      if (ui.dock) this._applyDock(ui.dock)
+      if (ui.slots) this.slots = ui.slots
       if (ui.panelsHidden) this.panelsHidden = ui.panelsHidden
       if (ui.activeTab) this.activeTab = ui.activeTab
       if (ui.settingsOpen) this.settingsOpen = true
