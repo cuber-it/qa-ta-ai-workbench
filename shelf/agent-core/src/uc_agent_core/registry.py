@@ -45,6 +45,21 @@ class _NullMcp:
 
 _mcp = _NullMcp()   # injected by the host
 
+# Audit-Senke fuer Agent-Skilling. Der Host injiziert callable(action, target,
+# summary) und ergaenzt dort Akteur ('agent') + run_id. Bleibt None -> kein Audit.
+_context_audit = None
+
+
+def _emit_audit(action: str, target: str, summary: str = "") -> None:
+    fn = _context_audit
+    if fn is None:
+        return
+    try:
+        fn(action, target, summary)
+    except Exception:  # noqa: BLE001
+        log.debug("Audit-Senke-Fehler", exc_info=True)
+
+
 _OBJ = {"type": "object", "properties": {}}
 
 # Standard-Keyword-Satz: jeder Eintrag gibt einem Treiber-Kommando einen
@@ -244,6 +259,29 @@ class ToolRegistry:
         specs.append(ToolDefinition(name="skill__load",
             description="Laedt die Schritt-fuer-Schritt-Anleitung eines Skills.",
             input_schema={"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}))
+        specs.append(ToolDefinition(name="skill__create",
+            description=("Neuen eigenen Skill anlegen. content ist ein vollstaendiges "
+                         "SKILL.md: Frontmatter mit 'name' und 'when_to_use', danach die "
+                         "Schritt-fuer-Schritt-Anleitung. Schlaegt fehl, wenn der Name schon "
+                         "existiert — dann skill__update nutzen."),
+            input_schema={"type": "object", "properties": {
+                "name": {"type": "string", "description": "Kurzname (a-z 0-9 - _)"},
+                "content": {"type": "string", "description": "vollstaendiger SKILL.md-Inhalt inkl. Frontmatter"}},
+                "required": ["name", "content"]}))
+        specs.append(ToolDefinition(name="skill__update",
+            description=("Bestehenden Skill anpassen (neuer vollstaendiger SKILL.md-Inhalt). "
+                         "Bei Werks-Skills wird eine Anpassung angelegt; der Default bleibt "
+                         "erhalten und ist wiederherstellbar."),
+            input_schema={"type": "object", "properties": {
+                "name": {"type": "string"},
+                "content": {"type": "string", "description": "neuer vollstaendiger SKILL.md-Inhalt"}},
+                "required": ["name", "content"]}))
+        specs.append(ToolDefinition(name="skill__delete",
+            description=("Eigenen oder angepassten Skill entfernen. Ein angepasster Werks-Skill "
+                         "wird auf den Default zurueckgesetzt; reine Werks-Skills lassen sich "
+                         "nicht loeschen."),
+            input_schema={"type": "object", "properties": {
+                "name": {"type": "string"}}, "required": ["name"]}))
         # Artefakt-Tools (schreiben in den Run-Ordner)
         specs.append(ToolDefinition(name="artifact__save",
             description="Speichert ein Artefakt (z. B. eine .feature-Datei) im Artefakt-Ordner des Runs.",
@@ -305,7 +343,41 @@ class ToolRegistry:
             if body is None:
                 return (f"Skill nicht gefunden: {sk}", True)
             return (body, False)
+        if name in ("skill__create", "skill__update", "skill__delete"):
+            return self._dispatch_skill_edit(name, arguments or {})
         return (f"Unbekanntes Skill-Tool: {name}", True)
+
+    def _dispatch_skill_edit(self, name: str, arguments: dict) -> tuple[str, bool]:
+        """skill__create/update/delete — schreibt nur in den Override-Ordner
+        (Werks-Defaults bleiben unangetastet) und protokolliert jede Aenderung."""
+        try:
+            key = skills._safe_key(arguments.get("name", ""))
+        except ValueError as e:
+            return (str(e), True)
+        existing = {s["key"] for s in skills.list_skills()}
+
+        if name == "skill__delete":
+            if key not in existing:
+                return (f"Kein Skill '{key}'.", True)
+            if not skills.remove_override(key):
+                return (f"'{key}' ist ein reiner Werks-Skill und kann nicht geloescht werden.", True)
+            if skills.has_default(key):
+                _emit_audit("reset", f"skill:{key}")
+                return (f"Skill '{key}' auf Werks-Default zurueckgesetzt.", False)
+            _emit_audit("delete", f"skill:{key}")
+            return (f"Skill '{key}' geloescht.", False)
+
+        content = arguments.get("content", "")
+        if not content.strip():
+            return ("content fehlt.", True)
+        is_create = name == "skill__create"
+        if is_create and key in existing:
+            return (f"Skill '{key}' existiert bereits — nutze skill__update.", True)
+        if not is_create and key not in existing:
+            return (f"Kein Skill '{key}' — nutze skill__create.", True)
+        skills.save_skill(key, content)
+        _emit_audit("create" if is_create else "update", f"skill:{key}", f"{len(content)} Zeichen")
+        return (f"Skill '{key}' {'angelegt' if is_create else 'aktualisiert'}.", False)
 
     def _run_dir(self) -> tuple[Path | None, str | None]:
         """Artefakt-Basisordner dieses Runs ('~' expandiert) oder Fehlertext."""

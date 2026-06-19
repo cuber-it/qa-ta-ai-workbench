@@ -181,18 +181,59 @@
         <section class="pane pane-col">
           <div class="stack">
 
-            <div class="quad">
-              <div class="quad-title">Kontext</div>
-              <div class="quad-body">
-                <ul class="skill-list" x-show="skills.length">
-                  <template x-for="s in skills" :key="s.name">
-                    <li class="skill-item">
-                      <span class="skill-name" x-text="s.name"></span>
-                      <span class="skill-when" x-text="s.when_to_use"></span>
+            <div class="quad quad-ctx">
+              <div class="quad-title">
+                <div class="view-seg">
+                  <button class="seg-btn" :class="{on: ctxView==='edit'}" @click="setCtxView('edit')">Bearbeiten</button>
+                  <button class="seg-btn" :class="{on: ctxView==='log'}" @click="setCtxView('log')">Protokoll</button>
+                </div>
+                <button class="ctx-new" x-show="ctxView==='edit'" @click="newSkill()" title="Neuen Skill anlegen">+ Skill</button>
+              </div>
+
+              <div class="quad-body ctx-body" x-show="ctxView==='edit'">
+                <ul class="ctx-list">
+                  <template x-for="it in ctxItems" :key="it.type + ':' + it.key">
+                    <li class="ctx-item" :class="{ sel: ctxSel && ctxSel.type===it.type && ctxSel.key===it.key }"
+                        @click="selectCtx(it)">
+                      <span class="ctx-ic" x-text="it.type==='prompt' ? '◆' : '▸'"></span>
+                      <span class="ctx-name" x-text="it.name"></span>
+                      <span class="ctx-badge" :class="'b-'+it.source" x-text="it.badge"></span>
                     </li>
                   </template>
+                  <p class="muted" x-show="!ctxItems.length">Lade…</p>
                 </ul>
-                <p class="muted" x-show="!skills.length">Keine Skills geladen.</p>
+
+                <div class="ctx-edit" x-show="ctxSel || ctxCreating" x-cloak>
+                  <input class="ctx-keyin" type="text" x-model="ctxNewKey" x-show="ctxCreating" x-cloak
+                         placeholder="skill-name (a-z 0-9 - _)" spellcheck="false">
+                  <div class="ctx-edit-title" x-show="!ctxCreating && ctxSel" x-cloak>
+                    <span x-text="ctxSel && ctxSel.name"></span>
+                    <span class="ctx-badge" :class="ctxSel && 'b-'+ctxSel.source" x-text="ctxSel && ctxSel.badge"></span>
+                  </div>
+                  <textarea class="ctx-area" x-model="ctxContent" spellcheck="false"
+                            :placeholder="ctxCreating ? 'SKILL.md mit Frontmatter (name, when_to_use) …' : ''"></textarea>
+                  <div class="ctx-actions">
+                    <button class="btn btn-primary btn-sm" @click="saveCtx()"
+                            :disabled="ctxBusy || !ctxContent.trim() || (ctxCreating ? !ctxNewKey.trim() : !ctxDirty)">Speichern</button>
+                    <button class="btn btn-sm" @click="cancelCtx()" :disabled="ctxBusy">Abbrechen</button>
+                    <button class="btn btn-sm ctx-reset" x-show="ctxCanReset" x-cloak @click="resetCtx()"
+                            :disabled="ctxBusy" x-text="ctxResetLabel"></button>
+                    <span class="ctx-msg" x-show="ctxMsg" x-cloak x-text="ctxMsg"></span>
+                  </div>
+                </div>
+                <p class="muted ctx-hint" x-show="!ctxSel && !ctxCreating">Eintrag wählen zum Bearbeiten.</p>
+              </div>
+
+              <div class="quad-body ctx-body" x-show="ctxView==='log'" x-cloak>
+                <template x-for="(e,i) in ctxLog" :key="i">
+                  <div class="ctx-logline">
+                    <span class="cl-ts" x-text="e.ts.slice(5,16).replace('T',' ')"></span>
+                    <span class="cl-actor" :class="'a-'+e.actor" x-text="e.actor==='agent' ? 'Agent' : 'Du'"></span>
+                    <span class="cl-act" x-text="e.action"></span>
+                    <span class="cl-target" x-text="e.target"></span>
+                  </div>
+                </template>
+                <p class="muted" x-show="!ctxLog.length">Noch keine Änderungen.</p>
               </div>
             </div>
 

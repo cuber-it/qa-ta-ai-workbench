@@ -81,10 +81,24 @@ function app() {
     budgetForm: { max_tokens_per_run: null, soft_tokens_per_run: null, max_usd_per_run: null, max_tokens_per_day: null },
     budgetSaved: false,
 
+    // --- Kontext-Editor (System-Prompt + Skills) ---
+    ctxView: 'edit',                // 'edit' | 'log'
+    ctxItems: [],                   // {type:'prompt'|'skill', key, name, badge, source, when}
+    ctxSel: null,                   // ausgewaehlter Eintrag
+    ctxContent: '',                 // Editor-Inhalt
+    ctxOrig: '',                    // Originalinhalt (Abbrechen / dirty-Check)
+    ctxCreating: false,             // Modus 'neuer Skill'
+    ctxNewKey: '',
+    ctxBusy: false,
+    ctxMsg: '',
+    ctxLog: [],
+    _CTX_BADGE: { default: 'Default', override: 'angepasst', custom: 'eigen' },
+
     init() {
       this.loadSettings()
       this.loadConfig()
       this.loadSkills()
+      this.loadContext()
       this.loadModels()
       this.pollStatus()
       this._pollTimer = setInterval(() => this.pollStatus(), 4000)
@@ -106,6 +120,144 @@ function app() {
         const r = await fetch('/api/skills')
         if (r.ok) this.skills = (await r.json()).skills || []
       } catch (e) { /* Skills sind unkritisch */ }
+    },
+
+    // ── Kontext-Editor ───────────────────────────────────────────────
+    async loadContext() {
+      try {
+        const r = await fetch('/api/context')
+        if (!r.ok) return
+        const d = await r.json()
+        const items = []
+        for (const p of (d.prompts || [])) {
+          const src = p.overridden ? 'override' : 'default'
+          items.push({ type: 'prompt', key: p.name, name: 'System-Prompt',
+                       source: src, badge: p.overridden ? 'angepasst' : 'Default' })
+        }
+        for (const s of (d.skills || [])) {
+          items.push({ type: 'skill', key: s.key, name: s.name, when: s.when_to_use,
+                       source: s.source, badge: this._CTX_BADGE[s.source] || s.source })
+        }
+        this.ctxItems = items
+      } catch (e) { /* Editor bleibt leer */ }
+    },
+
+    setCtxView(v) {
+      this.ctxView = v
+      if (v === 'log') this.loadCtxLog()
+    },
+
+    async loadCtxLog() {
+      try {
+        const r = await fetch('/api/context/changelog?limit=200')
+        if (r.ok) this.ctxLog = (await r.json()).entries || []
+      } catch (e) { /* unkritisch */ }
+    },
+
+    async selectCtx(item) {
+      this.ctxCreating = false
+      this.ctxNewKey = ''
+      this.ctxMsg = ''
+      this.ctxSel = item
+      const url = item.type === 'prompt'
+        ? '/api/context/prompt/' + encodeURIComponent(item.key)
+        : '/api/context/skill/' + encodeURIComponent(item.key)
+      try {
+        const r = await fetch(url)
+        if (!r.ok) { this.ctxMsg = 'Konnte nicht laden'; return }
+        const d = await r.json()
+        this.ctxContent = d.content || ''
+        this.ctxOrig = this.ctxContent
+        if (item.type === 'skill') item.has_default = !!d.has_default
+      } catch (e) { this.ctxMsg = 'Konnte nicht laden' }
+    },
+
+    newSkill() {
+      this.ctxCreating = true
+      this.ctxSel = null
+      this.ctxNewKey = ''
+      this.ctxMsg = ''
+      this.ctxContent = '---\nname: \nwhen_to_use: \n---\n\n'
+      this.ctxOrig = ''
+    },
+
+    get ctxDirty() { return this.ctxContent !== this.ctxOrig },
+
+    get ctxCanReset() {
+      if (this.ctxCreating || !this.ctxSel) return false
+      return this.ctxSel.source !== 'default'   // Prompt-override oder Skill override/custom
+    },
+
+    get ctxResetLabel() {
+      return (this.ctxSel && this.ctxSel.type === 'skill' && this.ctxSel.source === 'custom')
+        ? 'Löschen' : 'Zurücksetzen'
+    },
+
+    async saveCtx() {
+      if (this.ctxBusy) return
+      const creating = this.ctxCreating
+      const type = creating ? 'skill' : (this.ctxSel && this.ctxSel.type)
+      const key = (creating ? this.ctxNewKey : (this.ctxSel && this.ctxSel.key) || '').trim()
+      if (!type) return
+      if (!key) { this.ctxMsg = 'Name fehlt'; return }
+      if (!this.ctxContent.trim()) { this.ctxMsg = 'Inhalt fehlt'; return }
+      this.ctxBusy = true; this.ctxMsg = ''
+      const url = (type === 'prompt' ? '/api/context/prompt/' : '/api/context/skill/') + encodeURIComponent(key)
+      try {
+        const r = await fetch(url, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: this.ctxContent }),
+        })
+        const d = await r.json()
+        if (r.ok) {
+          this.ctxCreating = false
+          const selKey = (type === 'skill' && d.key) ? d.key : key
+          await this.loadContext()
+          const it = this.ctxItems.find(x => x.type === type && x.key === selKey)
+          if (it) await this.selectCtx(it)
+          else this.ctxOrig = this.ctxContent
+          this.ctxMsg = 'gespeichert ✓'
+          setTimeout(() => { this.ctxMsg = '' }, 2000)
+        } else { this.ctxMsg = d.detail || 'Fehler' }
+      } catch (e) { this.ctxMsg = 'Fehler beim Speichern' }
+      this.ctxBusy = false
+    },
+
+    cancelCtx() {
+      if (this.ctxCreating) {
+        this.ctxCreating = false; this.ctxSel = null
+        this.ctxContent = ''; this.ctxOrig = ''; this.ctxNewKey = ''
+      } else {
+        this.ctxContent = this.ctxOrig
+      }
+      this.ctxMsg = ''
+    },
+
+    async resetCtx() {
+      if (!this.ctxSel || this.ctxBusy) return
+      const { type, key } = this.ctxSel
+      const isCustom = type === 'skill' && this.ctxSel.source === 'custom'
+      const verb = isCustom ? 'löschen' : 'auf den Default zurücksetzen'
+      if (!confirm(`„${this.ctxSel.name}" wirklich ${verb}?`)) return
+      this.ctxBusy = true; this.ctxMsg = ''
+      const url = (type === 'prompt' ? '/api/context/prompt/' : '/api/context/skill/') + encodeURIComponent(key)
+      try {
+        const r = await fetch(url, { method: 'DELETE' })
+        const d = await r.json()
+        if (r.ok) {
+          await this.loadContext()
+          if (isCustom) {
+            this.ctxSel = null; this.ctxContent = ''; this.ctxOrig = ''
+          } else {
+            const it = this.ctxItems.find(x => x.type === type && x.key === key)
+            if (it) await this.selectCtx(it)
+            else { this.ctxSel = null; this.ctxContent = ''; this.ctxOrig = '' }
+          }
+          this.ctxMsg = isCustom ? 'gelöscht' : 'zurückgesetzt'
+          setTimeout(() => { this.ctxMsg = '' }, 2000)
+        } else { this.ctxMsg = d.detail || 'Fehler' }
+      } catch (e) { this.ctxMsg = 'Fehler' }
+      this.ctxBusy = false
     },
 
     async loadModels() {

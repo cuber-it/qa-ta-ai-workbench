@@ -9,10 +9,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import __version__
-from . import applog, cancellation, config, killswitch, llm, mcp_client, projects, settings_store, usagelog
+from . import applog, cancellation, config, context_audit, killswitch, llm, mcp_client, projects, settings_store, usagelog
 from uc_llm_cost import cost_analytics, cost_guard, pricing, pricing_store
 from .cost.pricing_agent import PricingSubagent
-from uc_agent_core import loop as agent_loop, skills as agent_skills
+from uc_agent_core import loop as agent_loop, skills as agent_skills, prompts as agent_prompts
 from .agent import session as agent_session
 from .agent import registries as agent_registries
 
@@ -53,6 +53,97 @@ def version():
 def skills_list():
     """Verfuegbare (globale) Skills: Name + Einsatzzweck."""
     return {"skills": agent_skills.list_skills()}
+
+
+# ── Kontext: System-Prompt + Skills anzeigen/bearbeiten ──────────────────────
+class ContextContentIn(BaseModel):
+    content: str
+
+
+@app.get("/api/context")
+def context_overview():
+    """System-Prompt + Skills (mit Quelle default/override/custom) fuer den Editor."""
+    return {
+        "prompts": [{"name": "system", "overridden": agent_prompts.is_overridden("system")}],
+        "skills": agent_skills.list_skills(),
+    }
+
+
+@app.get("/api/context/prompt/{name}")
+def context_get_prompt(name: str):
+    content = agent_prompts.load_prompt(name)
+    if not content:
+        raise HTTPException(status_code=404, detail=f"Prompt '{name}' nicht gefunden")
+    return {"name": name, "content": content,
+            "default": agent_prompts.default_prompt(name),
+            "overridden": agent_prompts.is_overridden(name)}
+
+
+@app.put("/api/context/prompt/{name}")
+def context_put_prompt(name: str, body: ContextContentIn):
+    if name != "system":
+        raise HTTPException(status_code=404, detail=f"Unbekannter Prompt '{name}'")
+    if not body.content.strip():
+        raise HTTPException(status_code=400, detail="content fehlt")
+    agent_prompts.save_override(name, body.content)
+    context_audit.record("human", "update", f"prompt:{name}", f"{len(body.content)} Zeichen")
+    log.info("Prompt '%s' gespeichert (%d Zeichen)", name, len(body.content))
+    return {"name": name, "overridden": True}
+
+
+@app.delete("/api/context/prompt/{name}")
+def context_reset_prompt(name: str):
+    if agent_prompts.reset_override(name):
+        context_audit.record("human", "reset", f"prompt:{name}")
+        log.info("Prompt '%s' auf Default zurueckgesetzt", name)
+        return {"name": name, "overridden": False, "reset": True}
+    return {"name": name, "overridden": False, "reset": False}
+
+
+@app.get("/api/context/skill/{key}")
+def context_get_skill(key: str):
+    raw = agent_skills.read_raw(key)
+    if raw is None:
+        raise HTTPException(status_code=404, detail=f"Skill '{key}' nicht gefunden")
+    meta = {s["key"]: s for s in agent_skills.list_skills()}.get(key, {})
+    return {"key": key, "content": raw, "source": meta.get("source", "custom"),
+            "has_default": agent_skills.has_default(key)}
+
+
+@app.put("/api/context/skill/{key}")
+def context_put_skill(key: str, body: ContextContentIn):
+    if not body.content.strip():
+        raise HTTPException(status_code=400, detail="content fehlt")
+    try:
+        k = agent_skills.safe_key(key)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    existed = k in {s["key"] for s in agent_skills.list_skills()}
+    agent_skills.save_skill(k, body.content)
+    context_audit.record("human", "update" if existed else "create",
+                         f"skill:{k}", f"{len(body.content)} Zeichen")
+    log.info("Skill '%s' %s", k, "aktualisiert" if existed else "angelegt")
+    return {"key": k, "created": not existed}
+
+
+@app.delete("/api/context/skill/{key}")
+def context_delete_skill(key: str):
+    try:
+        k = agent_skills.safe_key(key)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not agent_skills.remove_override(k):
+        raise HTTPException(status_code=400,
+            detail=f"'{k}' ist ein reiner Werks-Skill und kann nicht geloescht werden")
+    is_reset = agent_skills.has_default(k)
+    context_audit.record("human", "reset" if is_reset else "delete", f"skill:{k}")
+    log.info("Skill '%s' %s", k, "zurueckgesetzt" if is_reset else "geloescht")
+    return {"key": k, "reset": is_reset}
+
+
+@app.get("/api/context/changelog")
+def context_changelog(limit: int = 200):
+    return {"entries": context_audit.read(limit=limit)}
 
 
 def _provider_of(model: str) -> str:

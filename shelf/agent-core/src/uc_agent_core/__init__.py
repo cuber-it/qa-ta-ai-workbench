@@ -22,7 +22,7 @@ from .registry import ToolRegistry
 __all__ = [
     "loop", "registry", "hooks", "prompts", "skills", "validators", "ToolRegistry",
     "set_settings_loader", "set_llm", "set_cancellation", "set_killswitch", "set_mcp_client",
-    "set_usage_sink", "set_context_dir",
+    "set_usage_sink", "set_context_dir", "set_context_audit_sink",
 ]
 
 
@@ -64,3 +64,9 @@ def set_context_dir(base):
     b = Path(base) if base else None
     prompts.set_override_dir((b / "prompts") if b else None)
     skills.set_override_dir((b / "skills") if b else None)
+
+
+def set_context_audit_sink(fn):
+    """Callable(action, target, summary) nach jeder Agent-Skilling-Aktion, oder None.
+    Der Host ergaenzt Akteur ('agent') und run_id. Darf nicht werfen."""
+    registry._context_audit = fn

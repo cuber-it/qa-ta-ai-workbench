@@ -35,6 +35,17 @@ def _safe_key(key: str) -> str:
     return k
 
 
+safe_key = _safe_key  # oeffentlicher Alias
+
+
+def _norm(key: str) -> str | None:
+    """Sicherer Key oder None (statt Exception) — fuer lesende Zugriffe."""
+    try:
+        return _safe_key(key)
+    except ValueError:
+        return None
+
+
 def _parse(md: str) -> tuple[dict, str]:
     """Trennt optionales ----Frontmatter vom Body."""
     meta: dict = {}
@@ -91,22 +102,29 @@ def load_skill(name: str) -> str | None:
 
 def read_raw(key: str) -> str | None:
     """Voller SKILL.md-Text (mit Frontmatter), Override vor Default — fuer den Editor."""
+    k = _norm(key)
+    if not k:
+        return None
     for base in (_override_dir, _SKILLS_DIR):
         if base is None:
             continue
-        f = base / key / "SKILL.md"
+        f = base / k / "SKILL.md"
         if f.is_file():
             return f.read_text(encoding="utf-8")
     return None
 
 
 def default_raw(key: str) -> str | None:
-    f = _SKILLS_DIR / key / "SKILL.md"
+    k = _norm(key)
+    if not k:
+        return None
+    f = _SKILLS_DIR / k / "SKILL.md"
     return f.read_text(encoding="utf-8") if f.is_file() else None
 
 
 def has_default(key: str) -> bool:
-    return (_SKILLS_DIR / key / "SKILL.md").is_file()
+    k = _norm(key)
+    return bool(k) and (_SKILLS_DIR / k / "SKILL.md").is_file()
 
 
 def save_skill(key: str, content: str) -> str:

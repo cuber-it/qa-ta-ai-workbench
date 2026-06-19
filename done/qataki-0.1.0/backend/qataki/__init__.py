@@ -30,6 +30,13 @@ _agent.set_usage_sink(_usagelog.record)
 # Kontext-Overrides (editierte Prompts & Skills) unter home/data/context.
 _agent.set_context_dir(_paths.context_dir())
 
+# Agent-Skilling protokollieren: Aenderungen des Agenten an Skills landen mit
+# Akteur 'agent' und aktueller run_id im Kontext-Changelog.
+from . import applog as _applog, context_audit as _context_audit
+_agent.set_context_audit_sink(
+    lambda action, target, summary: _context_audit.record(
+        "agent", action, target, summary, run_id=_applog.current_run()))
+
 # Wire the credential store (shelf/credentials): credentials.yaml under
 # QATAKI_HOME (git-ignored). Env QATAKI_CRED__<PROFILE>__<FIELD> still wins.
 import uc_credentials as _creds
