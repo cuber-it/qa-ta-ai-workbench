@@ -1,0 +1,37 @@
+# QATAKI – Konfiguration
+#
+# Zentrale Default-Werte. Handgepflegt, versioniert, read-only zur Laufzeit.
+# Die Settings-UI schreibt nur Abweichungen nach data/settings.json; was dort
+# fehlt, kommt aus dieser Datei, und was hier fehlt, aus den eingebauten
+# Fallbacks. Leere Strings bedeuten "kein Default".
+#
+# Secrets gehoeren NICHT hierher: API-Keys bleiben in .env.
+
+[llm]
+provider_type = "openai"        # "openai" oder "anthropic"
+model = "gpt-4o-mini"           # leer = Provider-Default
+max_tokens = 4096
+temperature = 0.3
+agent_max_tokens = 16384
+agent_temperature = 0.3
+agent_max_iterations = 15
+
+[project_defaults]
+base_url = ""                   # z. B. "https://staging.example.com"
+description = ""
+artifacts_base = "~/.qataki"    # Basis; je Projekt entsteht <base>/<projektname>, je Run darunter <run-id>
+default_provider = "openai"     # "" = globale LLM-Einstellung, sonst "openai"/"anthropic"
+
+[run_defaults]
+headless = true
+
+[budget]
+# Kosten-Firewall. Env-Variablen (QATAKI_MAX_*) ueberschreiben diese Werte.
+max_tokens_per_run  = 50000
+soft_tokens_per_run = 40000
+sparmode_tokens     = 45000
+max_usd_per_run     = 1.00
+max_tokens_per_day  = 500000
+max_usd_per_day     = 5.00
+max_usd_per_month   = 50.00
+confirm_above_usd   = 0.10
