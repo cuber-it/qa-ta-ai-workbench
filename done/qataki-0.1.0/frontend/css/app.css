@@ -38,8 +38,9 @@ body {
 }
 .bar-bottom { border-bottom: none; border-top: 1px solid var(--border); }
 .brand { font-weight: 700; letter-spacing: .02em; }
-.brand-project { color: var(--muted); font-weight: 500; }
-.brand-project::before { content: '·'; margin: 0 .5rem; color: var(--border); }
+.bar-left { display: flex; align-items: center; gap: .5rem; }
+.bar-center { flex: 1; min-width: 0; text-align: center; }
+.brand-project { color: var(--muted); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: inline-block; max-width: 100%; vertical-align: bottom; }
 .bar-status { color: var(--muted); font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 
 /* Burger-Menü */
@@ -64,6 +65,10 @@ body {
 }
 .menu-item:hover { background: var(--hover); }
 .menu-sep { border: none; border-top: 1px solid var(--border); margin: 4px 0; }
+.menu-list.menu-right { left: auto; right: 0; }
+.fenster-btn { font-size: 13px; padding: 4px 8px; }
+.panel-item { display: flex; align-items: center; gap: .5rem; }
+.panel-check { width: 1em; flex: 0 0 auto; color: var(--accent); }
 
 /* Body: Sidebar + Main, zwischen den Bars eingespannt */
 .body {
@@ -124,7 +129,7 @@ body {
 /* Modal */
 .modal-overlay {
   position: fixed; inset: 0; background: rgba(0,0,0,.35);
-  display: flex; align-items: center; justify-content: center; z-index: 100;
+  display: flex; align-items: center; justify-content: center; z-index: 10000;
 }
 .modal {
   background: var(--panel); border-radius: 10px; min-width: 420px; max-width: 90vw;
@@ -194,7 +199,7 @@ body {
 .btn-primary:hover { background: #92400e; }
 
 /* ── Bar1 rechts außen: Verbindungs-Bubble + NOTAUS ─────────────────── */
-.bar-right { margin-left: auto; display: flex; align-items: center; gap: .6rem; }
+.bar-right { display: flex; align-items: center; gap: .6rem; }
 
 .conn-bubble {
   width: 15px; height: 15px; border-radius: 50%;
@@ -290,6 +295,44 @@ body {
   text-transform: none; letter-spacing: 0; padding: 0;
 }
 .quad-action:hover { color: var(--accent); }
+
+/* ── Floating-Kacheln (pin/unpin, frei anordnen) ───────────────────── */
+.quad { position: relative; }
+.quad-title { padding-right: 1.1rem; }
+.quad.floating { box-shadow: 0 10px 30px rgba(0, 0, 0, .18); border: 1px solid var(--accent); border-radius: 8px; background: var(--panel); overflow: hidden; }
+.quad.floating .quad-title { cursor: move; user-select: none; }
+
+/* Dialog-Pane als Floater (Pin/Drag/Resize wie Kacheln) */
+.pane-dialog { position: relative; }
+.pane-title { display: flex; align-items: center; gap: .35rem; }
+.pane.floating { box-shadow: 0 10px 30px rgba(0, 0, 0, .18); border: 1px solid var(--accent); border-radius: 8px; background: var(--panel); overflow: hidden; }
+.pane.floating .pane-title { cursor: move; user-select: none; }
+.pane.is-hidden { display: none !important; }
+.fl-pin { position: absolute; top: 3px; right: 4px; z-index: 3; border: none; background: transparent; cursor: pointer; font-size: 12px; line-height: 1; padding: 2px; opacity: .5; }
+.fl-pin:hover { opacity: 1; }
+.fl-resize { position: absolute; right: 0; bottom: 0; width: 16px; height: 16px; cursor: nwse-resize; z-index: 3; }
+.fl-resize::after { content: ""; position: absolute; right: 3px; bottom: 3px; width: 7px; height: 7px; border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); }
+.fl-grip { cursor: move; color: var(--muted); font-size: 13px; line-height: 1; user-select: none; padding-right: .1rem; flex: 0 0 auto; }
+.fl-grip:hover { color: var(--accent); }
+.quad.is-hidden { display: none !important; }
+
+/* ── Editor-Floater (CodeMirror) ───────────────────────────────────── */
+.editor-float { position: fixed; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--accent); border-radius: 8px; box-shadow: 0 14px 40px rgba(0, 0, 0, .22); overflow: hidden; }
+.ed-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; padding: .3rem .5rem; border-bottom: 1px solid var(--border); cursor: move; user-select: none; background: var(--hover); }
+.ed-title { display: flex; align-items: center; gap: .4rem; font-size: 12px; font-weight: 600; color: var(--text); }
+.ed-close { border: none; background: transparent; cursor: pointer; font-size: 20px; line-height: 1; color: var(--muted); padding: 0 .45rem; border-radius: 5px; }
+.ed-close:hover { background: #fde8e8; color: #b91c1c; }
+.ed-kind { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; font-weight: 700; color: var(--accent); }
+.ed-name { font-weight: 600; color: var(--text); }
+.ed-toolbar { display: flex; align-items: center; gap: .1rem; padding: .25rem .5rem; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.ed-tsep { width: 1px; height: 16px; background: var(--border); margin: 0 .3rem; }
+.ed-tool { border: none; background: transparent; cursor: pointer; font-size: 13px; line-height: 1; color: var(--muted); padding: 3px 7px; border-radius: 5px; min-width: 24px; }
+.ed-tool:hover { background: var(--hover); color: var(--text); }
+.ed-keyin { margin: .35rem .5rem 0; font-family: ui-monospace, Menlo, monospace; font-size: 12px; padding: .25rem .4rem; border: 1px solid var(--border); border-radius: 5px; }
+.ed-host { flex: 1; min-height: 0; overflow: hidden; margin: .35rem .5rem; border: 1px solid var(--border); border-radius: 5px; }
+.ed-host .CodeMirror { height: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.ed-foot { display: flex; align-items: center; padding: .3rem .5rem .45rem; }
+.ed-msg { margin-left: .5rem; font-size: 11px; color: var(--muted); }
 .quad-body { flex: 1; min-height: 0; overflow: auto; padding: .5rem .55rem; display: flex; flex-direction: column; }
 
 .chat { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: .35rem; padding-right: .25rem; }
@@ -301,6 +344,9 @@ body {
 .msg.cancelled { opacity: .5; }
 .msg-badge { display: inline-block; margin-top: .15rem; font-size: 10px; line-height: 1; padding: .12rem .35rem; border-radius: 99px; background: rgba(180, 83, 9, .14); color: var(--accent); border: 1px solid rgba(180, 83, 9, .28); }
 .msg-badge.cancel { background: rgba(185, 28, 28, .10); color: #b91c1c; border-color: rgba(185, 28, 28, .25); }
+.dlg-sep { align-self: stretch; display: flex; align-items: center; gap: .6rem; margin: .15rem 0; color: var(--muted); }
+.dlg-sep::before, .dlg-sep::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+.dlg-sep span { text-transform: uppercase; letter-spacing: .08em; font-size: 10px; white-space: nowrap; }
 
 .composer { display: flex; gap: .5rem; align-items: flex-end; padding-top: .5rem; border-top: 1px solid var(--border); margin-top: .5rem; }
 .composer-input { flex: 1; resize: vertical; min-height: 38px; max-height: 160px; padding: .5rem .6rem; border: 1px solid var(--border); border-radius: 8px; font: inherit; font-size: 14px; background: var(--panel); color: var(--text); }
@@ -340,14 +386,7 @@ body {
 .ctx-badge.b-override { color: var(--accent); border-color: #f1c98b; background: #fdf2e3; }
 .ctx-badge.b-custom { color: #047857; border-color: #a7f3d0; background: #ecfdf5; }
 
-.ctx-edit { display: flex; flex-direction: column; gap: .35rem; border-top: 1px solid var(--border); padding-top: .4rem; }
-.ctx-edit-title { display: flex; align-items: center; gap: .4rem; font-size: 12px; font-weight: 600; color: var(--text); }
-.ctx-keyin { font-family: ui-monospace, Menlo, monospace; font-size: 12px; padding: .25rem .4rem; border: 1px solid var(--border); border-radius: 5px; }
-.ctx-area { width: 100%; box-sizing: border-box; min-height: 160px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; line-height: 1.45; padding: .4rem; border: 1px solid var(--border); border-radius: 5px; color: var(--text); }
-.ctx-actions { display: flex; align-items: center; gap: 0; flex-wrap: wrap; }
-.ctx-actions .btn-sm:first-child { margin-left: 0; }
 .ctx-reset { color: #b91c1c; border-color: #fca5a5; }
-.ctx-msg { margin-left: .5rem; font-size: 11px; color: var(--muted); }
 .ctx-hint { margin: 0; }
 .btn-sm:disabled, .btn:disabled { opacity: .5; cursor: default; }
 

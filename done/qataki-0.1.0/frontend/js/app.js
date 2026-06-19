@@ -85,16 +85,37 @@ function app() {
     ctxView: 'edit',                // 'edit' | 'log'
     ctxItems: [],                   // {type:'prompt'|'skill', key, name, badge, source, when}
     ctxSel: null,                   // ausgewaehlter Eintrag
-    ctxContent: '',                 // Editor-Inhalt
-    ctxOrig: '',                    // Originalinhalt (Abbrechen / dirty-Check)
-    ctxCreating: false,             // Modus 'neuer Skill'
-    ctxNewKey: '',
-    ctxBusy: false,
-    ctxMsg: '',
     ctxLog: [],
     _CTX_BADGE: { default: 'Default', override: 'angepasst', custom: 'eigen' },
 
+    // --- Floating-Kacheln (Default angedockt; loesbar, frei anordenbar) ---
+    floaters: {},        // id -> { floating, x, y, w, h, z }
+    _floatZ: 100,
+    _drag: null,
+
+    // --- Editor-Floater (CodeMirror; Topic-Singleton, generisch) ---
+    // Aktuell Topic 'context' (Prompts/Skills); spaeter 'gherkin', 'code' ueber mode + Save-Hook.
+    ed: { open: false, topic: '', mode: 'yaml-frontmatter', title: '', kind: '', badge: '', source: '',
+          type: '', key: '', hasDefault: false, creating: false, newKey: '', busy: false, msg: '' },
+    edCM: null,
+    edOrig: '',
+
+    // --- Panel-Bibliothek (Fenster ein-/ausblenden) ---
+    PANELS: [
+      { id: 'dialog',    title: 'Dialog' },
+      { id: 'activity',  title: 'Aktivität' },
+      { id: 'artifacts', title: 'Artefakte' },
+      { id: 'context',   title: 'Kontext' },
+      { id: 'run',       title: 'Lauf' },
+      { id: 'free1',     title: 'Frei 1' },
+      { id: 'log',       title: 'Log & Verbrauch' },
+    ],
+    panelsHidden: {},        // id -> true = ausgeblendet
+    panelMenuOpen: false,
+
     init() {
+      this._onFloatMove = (e) => this._floatMove(e)
+      this._onFloatUp = () => this._floatUp()
       this.loadSettings()
       this.loadConfig()
       this.loadSkills()
@@ -106,6 +127,236 @@ function app() {
       this.$watch('settingsOpen', () => this._saveUi())
       this.$watch('activeTab', () => this._saveUi())
       this._startLogStream()
+    },
+
+    // ── Floating-Kacheln (pin/unpin, frei anordnen) ──────────────────
+    fl(id) {
+      if (!this.floaters[id]) this.floaters[id] = { floating: false, x: 90, y: 90, w: 380, h: 300, z: 0 }
+      return this.floaters[id]
+    },
+    isFloating(id) { return !!(this.floaters[id] && this.floaters[id].floating) },
+    togglePin(id) {
+      const f = this.fl(id)
+      const el = this._tileEl(id)
+      if (!f.floating) {
+        // angedockt -> schweben lassen, an aktueller Bildschirmposition (kein Sprung)
+        if (el) {
+          const r = el.getBoundingClientRect()
+          f.x = Math.max(0, Math.round(r.left)); f.y = Math.max(0, Math.round(r.top))
+          f.w = Math.round(r.width); f.h = Math.round(r.height)
+        }
+        f.floating = true
+        this._bringFront(id)
+      } else {
+        // schwebend -> an gewaehlter Stelle andocken (nur Quads in Stacks; Dialog kehrt heim)
+        if (el && el.classList.contains('quad')) {
+          const r = el.getBoundingClientRect()
+          const t = this._dockTarget(r.left + r.width / 2, r.top + 12)
+          if (t) { t.before ? t.stack.insertBefore(el, t.before) : t.stack.appendChild(el) }
+        }
+        f.floating = false
+      }
+      this._saveUi()
+    },
+    floaterStyle(id) {
+      const f = this.floaters[id]
+      if (!f || !f.floating) return ''
+      const z = id === 'editor' ? 9000 : (f.z || 100)   // Editor immer ganz oben
+      return `position:fixed;left:${f.x}px;top:${f.y}px;width:${f.w}px;height:${f.h}px;z-index:${z};`
+    },
+    // Editor: eine Bindung steuert Sichtbarkeit UND Position (kein x-show/:style-Konflikt)
+    editorStyle() {
+      if (!this.ed.open) return 'display:none'
+      const f = this.floaters.editor || { x: 160, y: 120, w: 560, h: 460 }
+      return `position:fixed;left:${f.x}px;top:${f.y}px;width:${f.w}px;height:${f.h}px;z-index:9000;`
+    },
+    _bringFront(id) { this._floatZ++; this.fl(id).z = this._floatZ },
+    floaterDown(id, e) {
+      if (!this.isFloating(id)) return                                   // angedockt -> nicht draggen
+      if (e.target.closest('button, input, textarea, select, .fl-resize')) return
+      const f = this.fl(id); this._bringFront(id)
+      this._drag = { id, mode: 'move', sx: e.clientX, sy: e.clientY, ox: f.x, oy: f.y }
+      e.preventDefault()
+      window.addEventListener('mousemove', this._onFloatMove)
+      window.addEventListener('mouseup', this._onFloatUp)
+    },
+    floaterResizeDown(id, e) {
+      const f = this.fl(id); this._bringFront(id)
+      this._drag = { id, mode: 'resize', sx: e.clientX, sy: e.clientY, ow: f.w, oh: f.h }
+      e.preventDefault(); e.stopPropagation()
+      window.addEventListener('mousemove', this._onFloatMove)
+      window.addEventListener('mouseup', this._onFloatUp)
+    },
+    _floatMove(e) {
+      const d = this._drag; if (!d) return
+      const f = this.fl(d.id)
+      if (d.mode === 'move') {
+        f.x = Math.max(0, d.ox + (e.clientX - d.sx))
+        f.y = Math.max(0, d.oy + (e.clientY - d.sy))
+      } else {
+        f.w = Math.max(240, d.ow + (e.clientX - d.sx))
+        f.h = Math.max(140, d.oh + (e.clientY - d.sy))
+      }
+    },
+    _floatUp() {
+      window.removeEventListener('mousemove', this._onFloatMove)
+      window.removeEventListener('mouseup', this._onFloatUp)
+      this._drag = null
+      this._saveUi()
+    },
+
+    // ── Andocken an frei gewählte Spalten-Position ───────────────────
+    _tileEl(id) { return document.querySelector(`[data-fl="${id}"]`) },
+    _stacks() { return [...document.querySelectorAll('.pane-col .stack')] },
+    // Aus einer Bildschirm-Koordinate Ziel-Spalte (.stack) + Einfüge-Nachbar ermitteln.
+    _dockTarget(cx, cy) {
+      const stacks = this._stacks()
+      if (!stacks.length) return null
+      let stack = stacks.find(s => { const r = s.getBoundingClientRect(); return cx >= r.left && cx < r.right })
+      if (!stack) {  // ausserhalb aller Spalten -> nächstgelegene nach x-Mitte
+        let best = null, bestD = Infinity
+        for (const s of stacks) {
+          const r = s.getBoundingClientRect(), mid = (r.left + r.right) / 2, d = Math.abs(cx - mid)
+          if (d < bestD) { bestD = d; best = s }
+        }
+        stack = best
+      }
+      if (!stack) return null
+      const docked = [...stack.children].filter(el => el.classList.contains('quad') && !el.classList.contains('floating'))
+      let before = null
+      for (const el of docked) {
+        const r = el.getBoundingClientRect()
+        if (cy < r.top + r.height / 2) { before = el; break }
+      }
+      return { stack, before }
+    },
+    // Angedocktes Layout erfassen: pro Spalte die Reihenfolge der angedockten Kachel-IDs.
+    _captureDock() {
+      return this._stacks().map(stack =>
+        [...stack.children]
+          .filter(el => el.classList.contains('quad') && el.dataset.fl && !this.isFloating(el.dataset.fl))
+          .map(el => el.dataset.fl)
+      )
+    },
+    // Gespeichertes Layout nachspielen (DOM-Move in die jeweilige Spalte/Reihenfolge).
+    _applyDock(layout) {
+      if (!Array.isArray(layout)) return
+      const stacks = this._stacks()
+      layout.forEach((ids, ci) => {
+        const stack = stacks[ci]; if (!stack || !Array.isArray(ids)) return
+        ids.forEach(id => { const el = this._tileEl(id); if (el && !this.isFloating(id)) stack.appendChild(el) })
+      })
+    },
+    // Panel-Sichtbarkeit
+    isVisible(id) { return !this.panelsHidden[id] },
+    togglePanel(id) { this.panelsHidden[id] = !this.panelsHidden[id]; this._saveUi() },
+
+    // ── Editor-Floater (CodeMirror) ──────────────────────────────────
+    _edEnsureCM() {
+      if (this.edCM || !window.CodeMirror) return
+      this.edCM = CodeMirror(this.$refs.edHost, {
+        lineNumbers: true, lineWrapping: true, mode: this.ed.mode,
+        extraKeys: {
+          'Ctrl-S': () => this.edSave(), 'Cmd-S': () => this.edSave(),
+          'Ctrl-B': () => this.edWrap('**', '**'), 'Cmd-B': () => this.edWrap('**', '**'),
+          'Ctrl-I': () => this.edWrap('*', '*'), 'Cmd-I': () => this.edWrap('*', '*'),
+        },
+      })
+      this.edCM.setSize('100%', '100%')
+    },
+    _edShow(content, mode) {
+      this.ed.open = true
+      if (!this.floaters.editor) this.floaters.editor = { floating: true, x: 160, y: 120, w: 560, h: 460, z: 0 }
+      const f = this.floaters.editor
+      f.x = Math.min(Math.max(0, f.x), Math.max(0, window.innerWidth - 120))
+      f.y = Math.min(Math.max(0, f.y), Math.max(0, window.innerHeight - 80))
+      f.floating = true
+      this._bringFront('editor')
+      this.edOrig = content
+      this.$nextTick(() => {
+        this._edEnsureCM()
+        if (this.edCM) {
+          this.edCM.setOption('mode', mode || this.ed.mode)
+          this.edCM.setValue(content)
+          this.edCM.refresh()
+          this.edCM.focus()
+        }
+      })
+    },
+    get edContent() { return this.edCM ? this.edCM.getValue() : '' },
+    get edDirty() { return this.edCM ? (this.edCM.getValue() !== this.edOrig) : false },
+    get edCanReset() {
+      if (!this.ed.open || this.ed.creating) return false
+      return !!this.ed.source && this.ed.source !== 'default'
+    },
+    get edResetLabel() {
+      return (this.ed.type === 'skill' && this.ed.source === 'custom') ? 'Löschen' : 'Zurücksetzen'
+    },
+    edClose() { this.ed.open = false; this.ed.msg = '' },
+    edCancel() { this.edClose() },   // Abbrechen = verwerfen und schliessen
+    edWrap(before, after) {
+      const cm = this.edCM; if (!cm) return
+      cm.focus()
+      const sel = cm.getSelection()
+      cm.replaceSelection(before + sel + after)
+      if (!sel) { const c = cm.getCursor(); cm.setCursor({ line: c.line, ch: c.ch - after.length }) }
+    },
+    edPrefix(prefix) {
+      const cm = this.edCM; if (!cm) return
+      cm.focus()
+      const from = cm.getCursor('from'), to = cm.getCursor('to')
+      for (let l = from.line; l <= to.line; l++) cm.replaceRange(prefix, { line: l, ch: 0 })
+    },
+    async edSave() {
+      if (this.ed.busy) return
+      const creating = this.ed.creating
+      const type = this.ed.type
+      const key = (creating ? this.ed.newKey : (this.ed.key || '')).trim()
+      const content = this.edContent
+      if (!key) { this.ed.msg = 'Name fehlt'; return }
+      if (!content.trim()) { this.ed.msg = 'Inhalt fehlt'; return }
+      this.ed.busy = true; this.ed.msg = ''
+      const url = (type === 'prompt' ? '/api/context/prompt/' : '/api/context/skill/') + encodeURIComponent(key)
+      try {
+        const r = await fetch(url, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content }),
+        })
+        const d = await r.json()
+        if (r.ok) {
+          this.edOrig = content
+          this.ed.creating = false
+          if (type === 'skill' && d.key) this.ed.key = d.key
+          await this.loadContext()
+          const it = this.ctxItems.find(x => x.type === type && x.key === this.ed.key)
+          if (it) { this.ed.source = it.source; this.ed.badge = it.badge; this.ed.title = it.name; this.ctxSel = it }
+          this.ed.msg = 'gespeichert ✓'
+          setTimeout(() => { this.ed.msg = '' }, 2000)
+        } else { this.ed.msg = d.detail || 'Fehler' }
+      } catch (e) { this.ed.msg = 'Fehler beim Speichern' }
+      this.ed.busy = false
+    },
+    async edReset() {
+      if (this.ed.busy || !this.edCanReset) return
+      const { type, key, source, title } = this.ed
+      const isCustom = type === 'skill' && source === 'custom'
+      if (!confirm(`„${title}" wirklich ${isCustom ? 'löschen' : 'auf den Default zurücksetzen'}?`)) return
+      this.ed.busy = true; this.ed.msg = ''
+      const url = (type === 'prompt' ? '/api/context/prompt/' : '/api/context/skill/') + encodeURIComponent(key)
+      try {
+        const r = await fetch(url, { method: 'DELETE' })
+        const d = await r.json()
+        if (r.ok) {
+          await this.loadContext()
+          if (isCustom) { this.edClose(); this.ctxSel = null }
+          else {
+            const it = this.ctxItems.find(x => x.type === type && x.key === key)
+            if (it) await this.selectCtx(it)
+            else this.edClose()
+          }
+        } else { this.ed.msg = d.detail || 'Fehler'; this.ed.busy = false; return }
+      } catch (e) { this.ed.msg = 'Fehler'; this.ed.busy = false; return }
+      this.ed.busy = false
     },
 
     async loadConfig() {
@@ -155,109 +406,45 @@ function app() {
     },
 
     async selectCtx(item) {
-      this.ctxCreating = false
-      this.ctxNewKey = ''
-      this.ctxMsg = ''
       this.ctxSel = item
       const url = item.type === 'prompt'
         ? '/api/context/prompt/' + encodeURIComponent(item.key)
         : '/api/context/skill/' + encodeURIComponent(item.key)
       try {
         const r = await fetch(url)
-        if (!r.ok) { this.ctxMsg = 'Konnte nicht laden'; return }
+        if (!r.ok) return
         const d = await r.json()
-        this.ctxContent = d.content || ''
-        this.ctxOrig = this.ctxContent
-        if (item.type === 'skill') item.has_default = !!d.has_default
-      } catch (e) { this.ctxMsg = 'Konnte nicht laden' }
+        this.ed.topic = 'context'
+        this.ed.type = item.type
+        this.ed.kind = item.type === 'prompt' ? 'System-Prompt' : 'Skill'
+        this.ed.key = item.key
+        this.ed.title = item.name
+        this.ed.source = item.source
+        this.ed.badge = item.badge
+        this.ed.hasDefault = item.type === 'skill' ? !!d.has_default : false
+        this.ed.creating = false
+        this.ed.newKey = ''
+        this.ed.mode = item.type === 'prompt' ? 'markdown' : 'yaml-frontmatter'
+        this.ed.msg = ''
+        this._edShow(d.content || '', this.ed.mode)
+      } catch (e) { /* still */ }
     },
 
     newSkill() {
-      this.ctxCreating = true
       this.ctxSel = null
-      this.ctxNewKey = ''
-      this.ctxMsg = ''
-      this.ctxContent = '---\nname: \nwhen_to_use: \n---\n\n'
-      this.ctxOrig = ''
-    },
-
-    get ctxDirty() { return this.ctxContent !== this.ctxOrig },
-
-    get ctxCanReset() {
-      if (this.ctxCreating || !this.ctxSel) return false
-      return this.ctxSel.source !== 'default'   // Prompt-override oder Skill override/custom
-    },
-
-    get ctxResetLabel() {
-      return (this.ctxSel && this.ctxSel.type === 'skill' && this.ctxSel.source === 'custom')
-        ? 'Löschen' : 'Zurücksetzen'
-    },
-
-    async saveCtx() {
-      if (this.ctxBusy) return
-      const creating = this.ctxCreating
-      const type = creating ? 'skill' : (this.ctxSel && this.ctxSel.type)
-      const key = (creating ? this.ctxNewKey : (this.ctxSel && this.ctxSel.key) || '').trim()
-      if (!type) return
-      if (!key) { this.ctxMsg = 'Name fehlt'; return }
-      if (!this.ctxContent.trim()) { this.ctxMsg = 'Inhalt fehlt'; return }
-      this.ctxBusy = true; this.ctxMsg = ''
-      const url = (type === 'prompt' ? '/api/context/prompt/' : '/api/context/skill/') + encodeURIComponent(key)
-      try {
-        const r = await fetch(url, {
-          method: 'PUT', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ content: this.ctxContent }),
-        })
-        const d = await r.json()
-        if (r.ok) {
-          this.ctxCreating = false
-          const selKey = (type === 'skill' && d.key) ? d.key : key
-          await this.loadContext()
-          const it = this.ctxItems.find(x => x.type === type && x.key === selKey)
-          if (it) await this.selectCtx(it)
-          else this.ctxOrig = this.ctxContent
-          this.ctxMsg = 'gespeichert ✓'
-          setTimeout(() => { this.ctxMsg = '' }, 2000)
-        } else { this.ctxMsg = d.detail || 'Fehler' }
-      } catch (e) { this.ctxMsg = 'Fehler beim Speichern' }
-      this.ctxBusy = false
-    },
-
-    cancelCtx() {
-      if (this.ctxCreating) {
-        this.ctxCreating = false; this.ctxSel = null
-        this.ctxContent = ''; this.ctxOrig = ''; this.ctxNewKey = ''
-      } else {
-        this.ctxContent = this.ctxOrig
-      }
-      this.ctxMsg = ''
-    },
-
-    async resetCtx() {
-      if (!this.ctxSel || this.ctxBusy) return
-      const { type, key } = this.ctxSel
-      const isCustom = type === 'skill' && this.ctxSel.source === 'custom'
-      const verb = isCustom ? 'löschen' : 'auf den Default zurücksetzen'
-      if (!confirm(`„${this.ctxSel.name}" wirklich ${verb}?`)) return
-      this.ctxBusy = true; this.ctxMsg = ''
-      const url = (type === 'prompt' ? '/api/context/prompt/' : '/api/context/skill/') + encodeURIComponent(key)
-      try {
-        const r = await fetch(url, { method: 'DELETE' })
-        const d = await r.json()
-        if (r.ok) {
-          await this.loadContext()
-          if (isCustom) {
-            this.ctxSel = null; this.ctxContent = ''; this.ctxOrig = ''
-          } else {
-            const it = this.ctxItems.find(x => x.type === type && x.key === key)
-            if (it) await this.selectCtx(it)
-            else { this.ctxSel = null; this.ctxContent = ''; this.ctxOrig = '' }
-          }
-          this.ctxMsg = isCustom ? 'gelöscht' : 'zurückgesetzt'
-          setTimeout(() => { this.ctxMsg = '' }, 2000)
-        } else { this.ctxMsg = d.detail || 'Fehler' }
-      } catch (e) { this.ctxMsg = 'Fehler' }
-      this.ctxBusy = false
+      this.ed.topic = 'context'
+      this.ed.type = 'skill'
+      this.ed.kind = 'Skill'
+      this.ed.key = ''
+      this.ed.title = 'Neuer Skill'
+      this.ed.source = 'custom'
+      this.ed.badge = 'eigen'
+      this.ed.hasDefault = false
+      this.ed.creating = true
+      this.ed.newKey = ''
+      this.ed.mode = 'yaml-frontmatter'
+      this.ed.msg = ''
+      this._edShow('---\nname: \nwhen_to_use: \n---\n\n', 'yaml-frontmatter')
     },
 
     async loadModels() {
@@ -601,8 +788,10 @@ function app() {
       this._agentStopped = true
       if (this._agentAbort) this._agentAbort.abort()
       this.agentRunning = false
-      this.agentStatus = this.agentQueue.length
-        ? 'übersprungen – Warteschlange läuft weiter' : 'gestoppt'
+      const skipped = this.agentQueue.length > 0
+      this.agentStatus = skipped ? 'übersprungen – Warteschlange läuft weiter' : 'gestoppt'
+      this.dialog.push({ role: 'divider', text: skipped ? 'übersprungen' : 'unterbrochen' })
+      this._scrollChat()
     },
 
     // ── Prompt-History (↑/↓ wie in der Shell) ────────────────────────
@@ -701,6 +890,8 @@ function app() {
     toggleLogLevel(lv) { this.logFilter[lv] = !this.logFilter[lv] },
     toggleLogRun() { this.logOnlyRun = !this.logOnlyRun; if (!this.logHold) this._scrollLog() },
     toggleLogHold() { this.logHold = !this.logHold; if (!this.logHold) this._scrollLog() },
+    logToTop() { this.logHold = true; const el = this.$refs.logBody; if (el) el.scrollTop = 0 },
+    logToBottom() { this.logHold = false; const el = this.$refs.logBody; if (el) el.scrollTop = el.scrollHeight },
     logShort(lv) { return { DEBUG: 'DBG', INFO: 'INF', WARNING: 'WRN', ERROR: 'ERR' }[lv] || lv },
     setLogView(v) {
       this.logView = v
@@ -869,6 +1060,9 @@ function app() {
           runId: this.activeRunId || '',
           settingsOpen: !!this.settingsOpen,
           activeTab: this.activeTab || 'llm',
+          floaters: this.floaters,
+          dock: this._captureDock(),
+          panelsHidden: this.panelsHidden,
         }))
       } catch (e) {}
     },
@@ -877,6 +1071,14 @@ function app() {
       let ui
       try { ui = JSON.parse(localStorage.getItem('qataki.ui') || '{}') } catch (e) { return }
       if (!ui) return
+      if (ui.floaters) {
+        this.floaters = ui.floaters
+        let mx = 100
+        for (const k in ui.floaters) { const z = ui.floaters[k] && ui.floaters[k].z; if (z > mx) mx = z }
+        this._floatZ = mx
+      }
+      if (ui.dock) this._applyDock(ui.dock)
+      if (ui.panelsHidden) this.panelsHidden = ui.panelsHidden
       if (ui.activeTab) this.activeTab = ui.activeTab
       if (ui.settingsOpen) this.settingsOpen = true
       if (!ui.projectId) return

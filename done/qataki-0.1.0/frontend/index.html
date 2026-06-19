@@ -5,6 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>QATAKI</title>
   <link rel="stylesheet" href="/css/app.css">
+  <link rel="stylesheet" href="/vendor/codemirror/codemirror.css">
+  <link rel="stylesheet" href="/vendor/codemirror/dialog.css">
+  <script defer src="/vendor/codemirror/codemirror.js"></script>
+  <script defer src="/vendor/codemirror/yaml.js"></script>
+  <script defer src="/vendor/codemirror/markdown.js"></script>
+  <script defer src="/vendor/codemirror/yaml-frontmatter.js"></script>
+  <script defer src="/vendor/codemirror/dialog.js"></script>
+  <script defer src="/vendor/codemirror/searchcursor.js"></script>
+  <script defer src="/vendor/codemirror/search.js"></script>
   <script defer src="/js/app.js"></script>
   <script defer src="/vendor/alpine.min.js"></script>
 </head>
@@ -13,18 +22,34 @@
 
     <!-- Bar 1 -->
     <header class="bar bar-top">
-      <div class="menu" @click.outside="menuOpen = false">
-        <button class="menu-btn" @click="menuOpen = !menuOpen" aria-label="Menü" title="Menü">☰</button>
-        <div class="menu-list" x-show="menuOpen" x-cloak>
-          <button class="menu-item" @click="loadProject()">Projekt laden</button>
-          <hr class="menu-sep">
-          <button class="menu-item" @click="openSettings()">Einstellungen</button>
-          <hr class="menu-sep">
-          <button class="menu-item" @click="openAbout()">Über QATAKI</button>
+      <div class="bar-left">
+        <span class="brand">QATAKI</span>
+        <div class="menu" @click.outside="menuOpen = false">
+          <button class="menu-btn" @click="menuOpen = !menuOpen" aria-label="Menü" title="Menü">☰</button>
+          <div class="menu-list" x-show="menuOpen" x-cloak>
+            <button class="menu-item" @click="loadProject()">Projekt laden</button>
+            <hr class="menu-sep">
+            <button class="menu-item" @click="openSettings()">Einstellungen</button>
+            <hr class="menu-sep">
+            <button class="menu-item" @click="openAbout()">Über QATAKI</button>
+          </div>
+        </div>
+        <div class="menu" @click.outside="panelMenuOpen = false">
+          <button class="menu-btn fenster-btn" @click="panelMenuOpen = !panelMenuOpen" title="Fenster ein-/ausblenden">Fenster ▾</button>
+          <div class="menu-list" x-show="panelMenuOpen" x-cloak>
+            <template x-for="p in PANELS" :key="p.id">
+              <button class="menu-item panel-item" @click="togglePanel(p.id)">
+                <span class="panel-check" x-text="isVisible(p.id) ? '☑' : '☐'"></span>
+                <span x-text="p.title"></span>
+              </button>
+            </template>
+          </div>
         </div>
       </div>
-      <span class="brand">QATAKI</span>
-      <span class="brand-project" x-show="activeProject" x-cloak x-text="activeProject && activeProject.name"></span>
+
+      <div class="bar-center">
+        <span class="brand-project" x-show="activeProject" x-cloak x-text="activeProject && activeProject.name"></span>
+      </div>
 
       <div class="bar-right">
         <span class="bar-model" x-show="activeModelLabel" x-cloak x-text="activeModelLabel" title="Aktives Modell dieses Runs"></span>
@@ -84,19 +109,31 @@
       </aside>
 
       <main class="main">
-        <section class="pane pane-dialog">
-          <h2 class="pane-title">Dialog</h2>
+        <section class="pane pane-dialog" data-fl="dialog"
+                 :class="{ floating: isFloating('dialog'), 'is-hidden': !isVisible('dialog') }"
+                 :style="floaterStyle('dialog')">
+          <button class="fl-pin" @click.stop="togglePin('dialog')" :title="isFloating('dialog') ? 'Andocken' : 'Lösen (frei platzieren)'" x-text="isFloating('dialog') ? '📍' : '📌'"></button>
+          <h2 class="pane-title" @mousedown="floaterDown('dialog', $event)">
+            <span class="fl-grip" x-show="isFloating('dialog')" x-cloak title="Ziehen">⠿</span>
+            Dialog
+          </h2>
           <div class="chat" x-ref="chat">
             <template x-for="(m, i) in dialog" :key="i">
-              <div class="msg" :class="['msg-' + m.role, {queued: m.queued, cancelled: m.cancelled}]">
-                <div class="msg-body" x-text="m.text"></div>
-                <span class="msg-badge" x-show="m.queued" x-cloak>wartet…
-                  <button class="queued-x" @click.stop="removeQueued(m)" title="Aus Warteschlange entfernen">×</button>
-                </span>
-                <span class="msg-badge cancel" x-show="m.cancelled" x-cloak>abgebrochen</span>
-                <button class="copy-btn" x-data="{c:false}"
-                        @click.stop="copy(m.text); c=true; setTimeout(()=>c=false,1200)"
-                        x-text="c ? '✓' : '⧉'" :title="c ? 'kopiert' : 'kopieren'"></button>
+              <div style="display: contents">
+                <div class="dlg-sep" x-show="m.role === 'divider'" x-cloak>
+                  <span x-text="m.text"></span>
+                </div>
+                <div class="msg" :class="['msg-' + m.role, {queued: m.queued, cancelled: m.cancelled}]"
+                     x-show="m.role !== 'divider'">
+                  <div class="msg-body" x-text="m.text"></div>
+                  <span class="msg-badge" x-show="m.queued" x-cloak>wartet…
+                    <button class="queued-x" @click.stop="removeQueued(m)" title="Aus Warteschlange entfernen">×</button>
+                  </span>
+                  <span class="msg-badge cancel" x-show="m.cancelled" x-cloak>abgebrochen</span>
+                  <button class="copy-btn" x-data="{c:false}"
+                          @click.stop="copy(m.text); c=true; setTimeout(()=>c=false,1200)"
+                          x-text="c ? '✓' : '⧉'" :title="c ? 'kopiert' : 'kopieren'"></button>
+                </div>
               </div>
             </template>
             <div class="thinking" x-show="agentRunning" x-cloak>
@@ -120,12 +157,16 @@
             <button class="btn composer-stop" @click="stopAgent()" :disabled="!agentRunning"
               title="Laufenden Schritt abbrechen – Warteschlange läuft weiter">⏹ Stop</button>
           </div>
+          <div class="fl-resize" x-show="isFloating('dialog')" x-cloak @mousedown="floaterResizeDown('dialog', $event)"></div>
         </section>
         <section class="pane pane-col">
           <div class="stack">
 
-            <div class="quad">
-              <div class="quad-title">
+            <div class="quad" data-fl="activity" :class="{ floating: isFloating('activity'), 'is-hidden': !isVisible('activity') }" :style="floaterStyle('activity')">
+              <button class="fl-pin" @click.stop="togglePin('activity')"
+                      :title="isFloating('activity') ? 'Andocken' : 'Lösen (frei platzieren)'"
+                      x-text="isFloating('activity') ? '📍' : '📌'"></button>
+              <div class="quad-title" @mousedown="floaterDown('activity', $event)">
                 <span>Aktivität<span class="live-dot" x-show="agentRunning" x-cloak></span></span>
                 <button class="quad-action" x-show="toolLog.length"
                         @click="toggleAllActivity()"
@@ -159,10 +200,13 @@
                   <p class="muted" x-show="toolLog.length === 0">Tool-Aufrufe erscheinen hier.</p>
                 </div>
               </div>
+              <div class="fl-resize" x-show="isFloating('activity')" x-cloak
+                   @mousedown="floaterResizeDown('activity', $event)"></div>
             </div>
 
-            <div class="quad">
-              <div class="quad-title">Artefakte</div>
+            <div class="quad" data-fl="artifacts" :class="{ floating: isFloating('artifacts'), 'is-hidden': !isVisible('artifacts') }" :style="floaterStyle('artifacts')">
+              <button class="fl-pin" @click.stop="togglePin('artifacts')" :title="isFloating('artifacts') ? 'Andocken' : 'Lösen (frei platzieren)'" x-text="isFloating('artifacts') ? '📍' : '📌'"></button>
+              <div class="quad-title" @mousedown="floaterDown('artifacts', $event)">Artefakte</div>
               <div class="quad-body">
                 <ul class="art-list" x-show="artifacts.length">
                   <template x-for="(a, i) in artifacts" :key="i">
@@ -174,6 +218,7 @@
                 </ul>
                 <p class="muted" x-show="!artifacts.length">Screenshots, Videos, .feature-Dateien dieses Runs erscheinen hier (Doppelklick öffnet).</p>
               </div>
+              <div class="fl-resize" x-show="isFloating('artifacts')" x-cloak @mousedown="floaterResizeDown('artifacts', $event)"></div>
             </div>
 
           </div>
@@ -181,8 +226,10 @@
         <section class="pane pane-col">
           <div class="stack">
 
-            <div class="quad quad-ctx">
-              <div class="quad-title">
+            <div class="quad quad-ctx" data-fl="context" :class="{ floating: isFloating('context'), 'is-hidden': !isVisible('context') }" :style="floaterStyle('context')">
+              <button class="fl-pin" @click.stop="togglePin('context')" :title="isFloating('context') ? 'Andocken' : 'Lösen (frei platzieren)'" x-text="isFloating('context') ? '📍' : '📌'"></button>
+              <div class="quad-title" @mousedown="floaterDown('context', $event)">
+                <span class="fl-grip" x-show="isFloating('context')" x-cloak title="Ziehen">⠿</span>
                 <div class="view-seg">
                   <button class="seg-btn" :class="{on: ctxView==='edit'}" @click="setCtxView('edit')">Bearbeiten</button>
                   <button class="seg-btn" :class="{on: ctxView==='log'}" @click="setCtxView('log')">Protokoll</button>
@@ -202,26 +249,7 @@
                   </template>
                   <p class="muted" x-show="!ctxItems.length">Lade…</p>
                 </ul>
-
-                <div class="ctx-edit" x-show="ctxSel || ctxCreating" x-cloak>
-                  <input class="ctx-keyin" type="text" x-model="ctxNewKey" x-show="ctxCreating" x-cloak
-                         placeholder="skill-name (a-z 0-9 - _)" spellcheck="false">
-                  <div class="ctx-edit-title" x-show="!ctxCreating && ctxSel" x-cloak>
-                    <span x-text="ctxSel && ctxSel.name"></span>
-                    <span class="ctx-badge" :class="ctxSel && 'b-'+ctxSel.source" x-text="ctxSel && ctxSel.badge"></span>
-                  </div>
-                  <textarea class="ctx-area" x-model="ctxContent" spellcheck="false"
-                            :placeholder="ctxCreating ? 'SKILL.md mit Frontmatter (name, when_to_use) …' : ''"></textarea>
-                  <div class="ctx-actions">
-                    <button class="btn btn-primary btn-sm" @click="saveCtx()"
-                            :disabled="ctxBusy || !ctxContent.trim() || (ctxCreating ? !ctxNewKey.trim() : !ctxDirty)">Speichern</button>
-                    <button class="btn btn-sm" @click="cancelCtx()" :disabled="ctxBusy">Abbrechen</button>
-                    <button class="btn btn-sm ctx-reset" x-show="ctxCanReset" x-cloak @click="resetCtx()"
-                            :disabled="ctxBusy" x-text="ctxResetLabel"></button>
-                    <span class="ctx-msg" x-show="ctxMsg" x-cloak x-text="ctxMsg"></span>
-                  </div>
-                </div>
-                <p class="muted ctx-hint" x-show="!ctxSel && !ctxCreating">Eintrag wählen zum Bearbeiten.</p>
+                <p class="muted ctx-hint">Eintrag wählen öffnet den Editor.</p>
               </div>
 
               <div class="quad-body ctx-body" x-show="ctxView==='log'" x-cloak>
@@ -235,15 +263,18 @@
                 </template>
                 <p class="muted" x-show="!ctxLog.length">Noch keine Änderungen.</p>
               </div>
+              <div class="fl-resize" x-show="isFloating('context')" x-cloak @mousedown="floaterResizeDown('context', $event)"></div>
             </div>
 
-            <div class="quad">
-              <div class="quad-title">Lauf</div>
+            <div class="quad" data-fl="run" :class="{ floating: isFloating('run'), 'is-hidden': !isVisible('run') }" :style="floaterStyle('run')">
+              <button class="fl-pin" @click.stop="togglePin('run')" :title="isFloating('run') ? 'Andocken' : 'Lösen (frei platzieren)'" x-text="isFloating('run') ? '📍' : '📌'"></button>
+              <div class="quad-title" @mousedown="floaterDown('run', $event)">Lauf</div>
               <div class="quad-body">
                 <p class="muted" x-show="!agentStatus && !agentCosts">Status und Kosten erscheinen hier.</p>
                 <p x-show="agentStatus" x-cloak><span class="muted">Status:</span> <span x-text="agentStatus"></span></p>
                 <div class="run-costs" x-show="agentCosts" x-cloak x-text="costLine"></div>
               </div>
+              <div class="fl-resize" x-show="isFloating('run')" x-cloak @mousedown="floaterResizeDown('run', $event)"></div>
             </div>
 
           </div>
@@ -251,15 +282,19 @@
         <section class="pane pane-col">
           <div class="stack">
 
-            <div class="quad">
-              <div class="quad-title">Frei 1</div>
+            <div class="quad" data-fl="free1" :class="{ floating: isFloating('free1'), 'is-hidden': !isVisible('free1') }" :style="floaterStyle('free1')">
+              <button class="fl-pin" @click.stop="togglePin('free1')" :title="isFloating('free1') ? 'Andocken' : 'Lösen (frei platzieren)'" x-text="isFloating('free1') ? '📍' : '📌'"></button>
+              <div class="quad-title" @mousedown="floaterDown('free1', $event)">Frei 1</div>
               <div class="quad-body">
                 <p class="muted">Noch nicht belegt.</p>
               </div>
+              <div class="fl-resize" x-show="isFloating('free1')" x-cloak @mousedown="floaterResizeDown('free1', $event)"></div>
             </div>
 
-            <div class="quad quad-log">
-              <div class="quad-title">
+            <div class="quad quad-log" data-fl="log" :class="{ floating: isFloating('log'), 'is-hidden': !isVisible('log') }" :style="floaterStyle('log')">
+              <button class="fl-pin" @click.stop="togglePin('log')" :title="isFloating('log') ? 'Andocken' : 'Lösen (frei platzieren)'" x-text="isFloating('log') ? '📍' : '📌'"></button>
+              <div class="quad-title" @mousedown="floaterDown('log', $event)">
+                <span class="fl-grip" x-show="isFloating('log')" x-cloak title="Ziehen">⠿</span>
                 <div class="view-seg">
                   <button class="seg-btn" :class="{on: logView==='log'}" @click="setLogView('log')">Log</button>
                   <button class="seg-btn" :class="{on: logView==='usage'}" @click="setLogView('usage')">Usage</button>
@@ -273,6 +308,8 @@
                     <button class="log-btn lv-err" :class="{on: logFilter.ERROR}" @click="toggleLogLevel('ERROR')" title="Fehler">Err</button>
                     <button class="log-btn" :class="{on: logOnlyRun}" :disabled="!activeRunId" @click="toggleLogRun()" title="Nur aktueller Run">Run</button>
                     <button class="log-btn" :class="{on: logHold}" @click="toggleLogHold()" title="Autoscroll anhalten">Halten</button>
+                    <button class="log-btn" @click="logToTop()" title="Nach oben springen">⤒</button>
+                    <button class="log-btn" @click="logToBottom()" title="Nach unten springen">⤓</button>
                   </span>
                 </div>
               </div>
@@ -306,6 +343,7 @@
                 </template>
                 <p class="muted" x-show="!usage.entries.length">Noch kein Verbrauch erfasst.</p>
               </div>
+              <div class="fl-resize" x-show="isFloating('log')" x-cloak @mousedown="floaterResizeDown('log', $event)"></div>
             </div>
 
           </div>
@@ -315,6 +353,43 @@
 
     <!-- Bar 2 (reserviert) -->
     <footer class="bar bar-bottom"></footer>
+
+    <!-- Editor-Floater (CodeMirror) -->
+    <div class="editor-float" x-cloak :style="editorStyle()"
+         @keydown.escape.window="ed.open && edClose()">
+      <div class="ed-head" @mousedown="floaterDown('editor', $event)">
+        <span class="ed-title">
+          <span class="ed-kind" x-text="ed.kind"></span>
+          <span class="ed-name" x-text="ed.title"></span>
+          <span class="ctx-badge" :class="'b-'+ed.source" x-show="!ed.creating" x-cloak x-text="ed.badge"></span>
+        </span>
+        <button class="ed-close" @click="edClose()" title="Schließen (Esc)">×</button>
+      </div>
+      <input class="ed-keyin" type="text" x-model="ed.newKey" x-show="ed.creating" x-cloak
+             placeholder="skill-name (a-z 0-9 - _)" spellcheck="false">
+      <div class="ed-toolbar">
+        <button class="ed-tool" @click="edWrap('**','**')" title="Fett (Strg+B)"><b>B</b></button>
+        <button class="ed-tool" @click="edWrap('*','*')" title="Kursiv (Strg+I)"><i>I</i></button>
+        <button class="ed-tool" @click="edPrefix('# ')" title="Überschrift">H</button>
+        <button class="ed-tool" @click="edPrefix('- ')" title="Aufzählung">•</button>
+        <button class="ed-tool" @click="edWrap('`','`')" title="Code">&lt;/&gt;</button>
+        <button class="ed-tool" @click="edWrap('[','](https://)')" title="Link">🔗</button>
+        <span class="ed-tsep"></span>
+        <button class="ed-tool" @click="edCM && edCM.execCommand('undo')" title="Rückgängig (Strg+Z)">↶</button>
+        <button class="ed-tool" @click="edCM && edCM.execCommand('redo')" title="Wiederholen (Strg+Y)">↷</button>
+        <button class="ed-tool" @click="edCM && (edCM.focus(), edCM.execCommand('find'))" title="Suchen (Strg+F)">⌕</button>
+      </div>
+      <div class="ed-host" x-ref="edHost"></div>
+      <div class="ed-foot">
+        <button class="btn btn-primary btn-sm" @click="edSave()"
+                :disabled="ed.busy || (ed.creating && !ed.newKey.trim())">Speichern</button>
+        <button class="btn btn-sm" @click="edCancel()" :disabled="ed.busy">Abbrechen</button>
+        <button class="btn btn-sm ctx-reset" x-show="edCanReset" x-cloak @click="edReset()"
+                :disabled="ed.busy" x-text="edResetLabel"></button>
+        <span class="ed-msg" x-show="ed.msg" x-cloak x-text="ed.msg"></span>
+      </div>
+      <div class="fl-resize" @mousedown="floaterResizeDown('editor', $event)"></div>
+    </div>
 
   </div>
 
