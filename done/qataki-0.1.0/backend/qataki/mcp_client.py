@@ -13,22 +13,15 @@ from __future__ import annotations
 
 import json
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
 
 
-def _repo_root() -> Path:
-    here = Path(__file__).resolve()
-    for p in here.parents:
-        if (p / ".git").exists():
-            return p
-    return here.parents[2]
+from . import paths
 
-
-_CFG_PATH = _repo_root() / "data" / "mcp_servers.json"
+_CFG_PATH = paths.data_dir() / "mcp_servers.json"
 
 
 # ── Config ──────────────────────────────────────────────────────────────────

@@ -11,21 +11,14 @@ import json
 import logging
 import threading
 from datetime import datetime, timezone
-from pathlib import Path
 
 log = logging.getLogger("qataki.killswitch")
 
 
-def _repo_root() -> Path:
-    here = Path(__file__).resolve()
-    for parent in here.parents:
-        if (parent / ".git").exists():
-            return parent
-    return here.parents[2]
+from . import paths
 
-
-_FLAG_PATH  = _repo_root() / "data" / "emergency_stop.flag"
-_AUDIT_PATH = _repo_root() / "logs" / "cost_audit.jsonl"
+_FLAG_PATH  = paths.data_dir() / "emergency_stop.flag"
+_AUDIT_PATH = paths.logs_dir() / "cost_audit.jsonl"
 _LOCK = threading.Lock()
 
 

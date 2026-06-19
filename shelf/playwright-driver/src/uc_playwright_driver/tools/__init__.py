@@ -1,5 +1,15 @@
 """Playwright tool implementations — re-exports all tool functions."""
 # ruff: noqa: F401
+from .assertions import (
+    expect_count,
+    expect_hidden,
+    expect_text,
+    expect_title,
+    expect_url,
+    expect_value,
+    expect_visible,
+)
+from .auth import login_form, set_basic_auth
 from .browser import (
     recording_show_actions,
     screenshot,

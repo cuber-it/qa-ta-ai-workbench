@@ -22,6 +22,7 @@ from .registry import ToolRegistry
 __all__ = [
     "loop", "registry", "hooks", "prompts", "skills", "validators", "ToolRegistry",
     "set_settings_loader", "set_llm", "set_cancellation", "set_killswitch", "set_mcp_client",
+    "set_usage_sink", "set_context_dir",
 ]
 
 
@@ -48,3 +49,18 @@ def set_killswitch(fn):
 def set_mcp_client(obj):
     """Object/module providing load_config(), list_tools(server), call_tool(server, tool, args)."""
     registry._mcp = obj
+
+
+def set_usage_sink(fn):
+    """Callable(run_id, provider, model, input_tokens, output_tokens) called after each
+    LLM call, or None to disable. Used for token-usage accounting; must never raise."""
+    loop._usage_sink = fn
+
+
+def set_context_dir(base):
+    """Basisordner fuer benutzer-/agent-editierte Prompts & Skills (unter home/).
+    Prompts liegen in <base>/prompts, Skills in <base>/skills. Override vor Default."""
+    from pathlib import Path
+    b = Path(base) if base else None
+    prompts.set_override_dir((b / "prompts") if b else None)
+    skills.set_override_dir((b / "skills") if b else None)

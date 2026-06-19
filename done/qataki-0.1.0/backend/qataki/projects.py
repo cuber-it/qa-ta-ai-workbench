@@ -8,10 +8,9 @@ project_id im Session-Meta.
 import json
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
+from . import paths
 
-REPO = Path(__file__).resolve().parents[2]
-STORE = REPO / "data" / "projects.json"
+STORE = paths.data_dir() / "projects.json"
 
 
 def _now() -> str:

@@ -13,6 +13,8 @@ geschrieben.
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
 
 from uc_llm_provider import ChatRequest
 from uc_llm_provider.core.models import ToolChoiceAuto, ToolResultBlock
@@ -22,12 +24,20 @@ from uc_llm_cost import cost_guard
 from .registry import ToolRegistry
 from . import hooks, prompts, skills
 
+log = logging.getLogger(__name__)
+
+
+def _short(v, n: int = 120) -> str:
+    s = v if isinstance(v, str) else repr(v)
+    return s if len(s) <= n else s[:n] + "…"
+
 # Injection hooks — the host wires these via uc_agent_core.set_*(). Safe defaults
 # keep the module importable standalone; a real run needs llm + settings wired.
 _killswitch = lambda: False       # -> bool, True hard-stops
 _settings_loader = lambda: {}     # -> settings dict
 _llm = None                       # obj: key_present(pt), _provider(s), _text(resp)
 _cancellation = None              # obj: await run(coro)
+_usage_sink = None                # callable(run_id, model, input_tokens, output_tokens) or None
 
 # Fallback, falls prompts/system.md fehlt.
 _FALLBACK_SYSTEM = (
@@ -48,7 +58,7 @@ _MAX_CONSEC_ERRORS = 3
 
 
 async def astream(session, user_text: str, *, max_iterations: int | None = None,
-                  output_validator=None):
+                  output_validator=None, registry=None):
     """Agent-Lauf als Event-Strom. Yields dicts mit 'type':
     start | assistant | tool_use | tool_result | final | note | error | done.
     output_validator: optional Callable[[str], str|None] — prueft die finale
@@ -88,6 +98,7 @@ async def astream(session, user_text: str, *, max_iterations: int | None = None,
             model = prov.get_default_model()
         except Exception:
             model = "default"
+    provider = s.get("provider_type") or ""
 
     system = build_system()
     run_art = str(session.artifact_dir())
@@ -101,9 +112,13 @@ async def astream(session, user_text: str, *, max_iterations: int | None = None,
         system = system + "\n\n" + "\n".join(ctx)
     session.add_user(user_text)
     session.log("system", text=system)
+    log.info("Run gestartet (session=%s, model=%s, max_iter=%d)", session.id, model, max_iterations)
     yield {"type": "start", "session_id": session.id}
 
-    reg = ToolRegistry(headless=bool(run.get("headless", True)), artifacts_path=run_art)
+    # Browser/Registry kann vom Aufrufer geliehen werden (session-scoped, ueber
+    # mehrere Nachrichten hinweg). Nur selbst erzeugte Registry wird geschlossen.
+    owns_registry = registry is None
+    reg = registry or ToolRegistry(headless=bool(run.get("headless", True)), artifacts_path=run_art)
     guard = cost_guard.CostGuard()
     run_costs = cost_guard.RunCosts()
     final = None
@@ -114,6 +129,7 @@ async def astream(session, user_text: str, *, max_iterations: int | None = None,
     try:
         while it < max_iterations:
             it += 1
+            log.debug("Iteration %d/%d (model=%s)", it, max_iterations, model)
             if _killswitch():
                 stopped = "notaus"; session.log("error", reason="NOTAUS aktiv")
                 yield {"type": "error", "message": "NOTAUS aktiv"}; break
@@ -132,13 +148,32 @@ async def astream(session, user_text: str, *, max_iterations: int | None = None,
                 tools=await reg.tool_specs(),
                 tool_choice=ToolChoiceAuto(),
             )
+            log.debug("LLM-Call -> model=%s msgs=%d tools=%d max_tokens=%d temp=%.2f",
+                      model, len(req.messages), len(req.tools or []),
+                      req.max_tokens, req.temperature)
+            _t0 = time.monotonic()
             try:
                 resp = await _cancellation.run(prov.chat(req))
             except asyncio.CancelledError:
                 stopped = "abgebrochen"; session.log("error", reason="durch NOTAUS abgebrochen")
+                log.warning("LLM-Call abgebrochen (NOTAUS) nach %.0fms", (time.monotonic() - _t0) * 1000)
                 yield {"type": "error", "message": "abgebrochen"}; break
+            except Exception as e:  # noqa: BLE001
+                log.error("LLM-Call fehlgeschlagen nach %.0fms: %s: %s",
+                          (time.monotonic() - _t0) * 1000, type(e).__name__, e, exc_info=True)
+                raise
 
             u = resp.usage
+            log.info("LLM-Antwort: in=%d out=%d stop=%s tool_uses=%d %.0fms",
+                     getattr(u, "input_tokens", 0), getattr(u, "output_tokens", 0),
+                     getattr(resp, "stop_reason", "?"), len(resp.tool_uses or []),
+                     (time.monotonic() - _t0) * 1000)
+            if _usage_sink is not None:
+                try:
+                    _usage_sink(session.id, provider, model,
+                                getattr(u, "input_tokens", 0), getattr(u, "output_tokens", 0))
+                except Exception:  # noqa: BLE001 — Logging darf den Lauf nie stoppen
+                    log.debug("usage_sink-Fehler", exc_info=True)
             try:
                 warns = guard.record_llm_call(run_costs,
                     getattr(u, "input_tokens", 0), getattr(u, "output_tokens", 0), model=model)
@@ -159,10 +194,12 @@ async def astream(session, user_text: str, *, max_iterations: int | None = None,
             if tool_uses:
                 results = []
                 for tu in tool_uses:
+                    log.info("Tool %s(%s)", tu.name, _short(tu.input))
                     yield {"type": "tool_use", "id": tu.id, "name": tu.name, "input": tu.input}
                     blocked = hooks.check_tool(tu.name, tu.input)
                     if blocked:
                         content, is_error = blocked, True
+                        log.warning("Tool %s -> blockiert: %s", tu.name, _short(content))
                     else:
                         content, is_error = await reg.dispatch(tu.name, tu.input)
                     results.append(ToolResultBlock(tool_use_id=tu.id, content=content, is_error=is_error))
@@ -172,6 +209,7 @@ async def astream(session, user_text: str, *, max_iterations: int | None = None,
                 consec_errors = consec_errors + 1 if (results and all(r.is_error for r in results)) else 0
                 if consec_errors >= _MAX_CONSEC_ERRORS:
                     stopped = "tool-errors"
+                    log.error("Run gestoppt: %d fehlerhafte Tool-Runden in Folge", consec_errors)
                     session.log("error", reason=f"{consec_errors} fehlerhafte Tool-Runden in Folge")
                     yield {"type": "error", "message": "zu viele Tool-Fehler in Folge"}; break
                 continue
@@ -187,26 +225,30 @@ async def astream(session, user_text: str, *, max_iterations: int | None = None,
                         f"Die Antwort erfuellt die Vorgabe nicht: {verr} "
                         "Bitte korrigiere sie und gib nur das korrigierte Ergebnis aus.")
                     continue
+            log.info("Run fertig nach %d Iteration(en)", it)
             session.log("final", text=final or "")
             yield {"type": "final", "text": final or ""}
             break
         else:
             stopped = "max-iterations"
+            log.warning("Run gestoppt: max_iterations (%d) erreicht", max_iterations)
             session.log("error", reason=f"max_iterations ({max_iterations}) erreicht")
             yield {"type": "error", "message": f"max_iterations ({max_iterations}) erreicht"}
     finally:
-        await reg.aclose()
+        if owns_registry:
+            await reg.aclose()
 
+    log.info("Run beendet: stopped=%s, iterationen=%d", stopped, it)
     yield {"type": "done", "stopped": stopped, "iterations": it,
            "final": final, "costs": run_costs.to_dict()}
 
 
 async def run(session, user_text: str, *, max_iterations: int | None = None,
-              output_validator=None) -> dict:
+              output_validator=None, registry=None) -> dict:
     """Nicht-streamender Lauf: konsumiert astream und gibt das Endergebnis."""
     final = None; stopped = None; it = 0; costs = {}
     async for ev in astream(session, user_text, max_iterations=max_iterations,
-                            output_validator=output_validator):
+                            output_validator=output_validator, registry=registry):
         if ev["type"] == "done":
             stopped = ev["stopped"]; it = ev["iterations"]
             final = ev.get("final"); costs = ev["costs"]

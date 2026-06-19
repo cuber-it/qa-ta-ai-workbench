@@ -4,21 +4,39 @@ import json
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import __version__
-from . import cancellation, config, killswitch, llm, mcp_client, projects, settings_store
+from . import applog, cancellation, config, killswitch, llm, mcp_client, projects, settings_store, usagelog
 from uc_llm_cost import cost_analytics, cost_guard, pricing, pricing_store
 from .cost.pricing_agent import PricingSubagent
 from uc_agent_core import loop as agent_loop, skills as agent_skills
 from .agent import session as agent_session
+from .agent import registries as agent_registries
 
 REPO = Path(__file__).resolve().parents[2]
 FRONTEND = REPO / "frontend"
 
 app = FastAPI(title="QATAKI", version=__version__)
+
+applog.setup()
+applog.set_level(settings_store.load().get("log_level", "INFO"))
+usagelog.set_enabled(bool(settings_store.load().get("token_log", True)))
+log = applog.get_logger("qataki.api")
+applog.get_logger("qataki.main").info("QATAKI %s gestartet", __version__)
+
+
+@app.on_event("startup")
+async def _on_startup():
+    agent_registries.start_sweeper()
+
+
+@app.on_event("shutdown")
+async def _on_shutdown():
+    await agent_registries.stop_sweeper()
+    await agent_registries.close_all()
 
 
 @app.get("/api/health")
@@ -82,11 +100,22 @@ class SettingsIn(BaseModel):
     agent_max_tokens: int = 16384
     agent_temperature: float = 0.3
     agent_max_iterations: int = 15
+    token_log: bool | None = None   # None = unveraendert lassen; true/false schaltet live
 
 
 @app.post("/api/settings")
 def post_settings(body: SettingsIn):
-    return settings_store.save(body.model_dump())
+    data = body.model_dump()
+    res = settings_store.save(data)
+    if data.get("log_level"):
+        applog.set_level(data["log_level"])
+        log.info("Einstellungen gespeichert (log_level=%s)", data["log_level"])
+    elif data.get("token_log") is not None:
+        usagelog.set_enabled(bool(data["token_log"]))
+        log.info("Einstellungen gespeichert (token_log=%s)", bool(data["token_log"]))
+    else:
+        log.info("Einstellungen gespeichert")
+    return res
 
 
 # ── Chat / Kosten ───────────────────────────────────────────────────────────
@@ -234,20 +263,26 @@ def mcp_servers():
 def mcp_add_server(body: McpServerIn):
     headers = {"Authorization": f"Bearer {body.auth_token}"} if body.auth_token else None
     try:
-        return mcp_client.add_server(body.name, body.url, body.transport, headers)
+        res = mcp_client.add_server(body.name, body.url, body.transport, headers)
+        log.info("MCP-Server hinzugefügt: %s (%s, %s)", body.name, body.url, body.transport)
+        return res
     except ValueError as e:
+        log.warning("MCP-Server %s abgelehnt: %s", body.name, e)
         raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.delete("/api/mcp/servers/{name}")
 def mcp_remove_server(name: str):
+    log.info("MCP-Server entfernt: %s", name)
     return mcp_client.remove_server(name)
 
 
 @app.post("/api/mcp/primary")
 def mcp_set_primary(body: McpPrimaryIn):
     try:
-        return mcp_client.set_primary(body.name)
+        res = mcp_client.set_primary(body.name)
+        log.info("MCP-Primärserver gesetzt: %s", body.name)
+        return res
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Server '{body.name}' nicht gefunden")
 
@@ -337,19 +372,22 @@ def post_project(body: ProjectIn):
         Path(folder).expanduser().mkdir(parents=True, exist_ok=True)
     except Exception:
         pass
-    return projects.create_project(
+    proj = projects.create_project(
         body.name,
         base_url=body.base_url or d["base_url"],
         description=body.description or d["description"],
         artifacts_path=folder,
         default_provider=body.default_provider or d["default_provider"],
     )
+    log.info("Projekt angelegt: %s (id=%s)", body.name, proj.get("id", "?"))
+    return proj
 
 
 @app.post("/api/projects/{pid}/rename")
 def post_project_rename(pid: str, body: ProjectIn):
     if not projects.rename_project(pid, body.name):
         raise HTTPException(status_code=404, detail="Projekt unbekannt")
+    log.info("Projekt umbenannt: %s -> %s", pid, body.name)
     return {"id": pid, "name": body.name}
 
 
@@ -359,6 +397,7 @@ def delete_project(pid: str):
         raise HTTPException(status_code=404, detail="Projekt unbekannt")
     removed = sum(1 for s in agent_session.list_sessions(pid)
                   if agent_session.delete_session(s["id"]))
+    log.info("Projekt gelöscht: %s (%d Runs entfernt)", pid, removed)
     return {"deleted": pid, "runs_removed": removed}
 
 
@@ -382,12 +421,24 @@ def _agent_session(body: AgentMessageIn):
     return agent_session.Session.create(project_id=body.project_id)
 
 
+async def _session_registry(sess):
+    """Session-scoped Browser/Registry — ueber mehrere Nachrichten wiederverwendet,
+    damit die geoeffnete Seite zwischen den Nachrichten eines Runs erhalten bleibt."""
+    run = getattr(sess, "run", {}) or {}
+    return await agent_registries.get(
+        sess.id,
+        headless=bool(run.get("headless", True)),
+        artifacts_path=str(sess.artifact_dir()),
+    )
+
+
 @app.post("/api/agent/message")
 async def agent_message(body: AgentMessageIn):
     if not body.text.strip():
         raise HTTPException(status_code=400, detail="text fehlt")
     sess = _agent_session(body)
-    return await agent_loop.run(sess, body.text, max_iterations=body.max_iterations)
+    reg = await _session_registry(sess)
+    return await agent_loop.run(sess, body.text, max_iterations=body.max_iterations, registry=reg)
 
 
 @app.post("/api/agent/stream")
@@ -397,8 +448,77 @@ async def agent_stream(body: AgentMessageIn):
     sess = _agent_session(body)
 
     async def gen():
-        async for ev in agent_loop.astream(sess, body.text, max_iterations=body.max_iterations):
-            yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
+        applog.set_run(sess.id)
+        reg = await _session_registry(sess)
+        try:
+            async for ev in agent_loop.astream(sess, body.text,
+                                               max_iterations=body.max_iterations,
+                                               registry=reg):
+                yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
+        finally:
+            applog.clear_run()
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.get("/api/usage")
+def api_usage(limit: int = 500):
+    """Token-Verbrauch strukturiert fuer die UI: letzte ``limit`` Eintraege + Summen."""
+    return usagelog.read_recent(limit=limit)
+
+
+@app.get("/api/usage/tokens")
+def api_usage_tokens():
+    """Token-Verbrauchslog (logs/token-usage.log) als Text-Download.
+    Leer, solange noch nichts geloggt wurde."""
+    from pathlib import Path
+    p = Path(usagelog.path_str())
+    if not p.exists():
+        return PlainTextResponse("", headers={"X-Token-Log": "empty"})
+    return FileResponse(str(p), media_type="text/plain; charset=utf-8",
+                        filename="token-usage.log")
+
+
+@app.get("/api/logs")
+def api_logs(pos: int = 0, levels: str = "", run_id: str = "", limit: int = 1000):
+    """Inkrementelles App-Log fuers UI. ``levels`` komma-separiert, optional ``run_id``."""
+    raw = [x.strip().upper() for x in levels.split(",") if x.strip()]
+    norm = ["WARNING" if x == "WARN" else x for x in raw]
+    return applog.read_recent(pos=pos, levels=norm or None, run_id=(run_id or None), limit=limit)
+
+
+@app.get("/api/logs/stream")
+async def api_logs_stream(levels: str = "", run_id: str = "", backfill: int = 200):
+    """Live-Log via SSE: erst Backfill der letzten Zeilen, dann Push neuer Zeilen."""
+    raw = [x.strip().upper() for x in levels.split(",") if x.strip()]
+    want = {"WARNING" if x == "WARN" else x for x in raw} or None
+    rid = run_id or None
+
+    bc = applog.get_broadcaster()
+    if bc is None:
+        raise HTTPException(status_code=503, detail="Logging nicht initialisiert")
+    bc.bind_loop(asyncio.get_running_loop())
+    q = bc.subscribe()
+
+    async def gen():
+        try:
+            recent = applog.read_recent(
+                limit=backfill,
+                levels=list(want) if want else None,
+                run_id=rid,
+            )
+            for e in recent["entries"]:
+                yield f"data: {json.dumps(e, ensure_ascii=False)}\n\n"
+            while True:
+                e = await q.get()
+                if want and e["level"] not in want:
+                    continue
+                if rid and e["run"] != rid:
+                    continue
+                yield f"data: {json.dumps(e, ensure_ascii=False)}\n\n"
+        finally:
+            bc.unsubscribe(q)
 
     return StreamingResponse(gen(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
@@ -431,6 +551,7 @@ def create_run(body: RunIn):
         model=body.model,
         temperature=body.temperature,
     )
+    log.info("Run angelegt: %s (id=%s, projekt=%s)", s.title, s.id, s.project_id)
     return {"id": s.id, "title": s.title, "project_id": s.project_id, **s.run}
 
 
@@ -457,6 +578,7 @@ def rerun_session(sid: str):
         model=meta.get("model", ""),
         temperature=meta.get("temperature", ""),
     )
+    log.info("Run wiederholt: %s -> neuer Run %s", sid, s.id)
     return {"id": s.id, "title": s.title, "project_id": s.project_id,
             "task": task, **s.run}
 
@@ -519,6 +641,7 @@ class SessionRenameIn(BaseModel):
 def agent_session_rename(sid: str, body: SessionRenameIn):
     if not agent_session.rename_session(sid, body.title):
         raise HTTPException(status_code=404, detail="Session unbekannt")
+    log.info("Run umbenannt: %s -> %s", sid, body.title)
     return {"id": sid, "title": body.title}
 
 
@@ -537,17 +660,30 @@ def agent_session_edit(sid: str, body: SessionEditIn):
     fields = {k: v for k, v in body.model_dump().items() if v is not None}
     if not agent_session.update_session(sid, fields):
         raise HTTPException(status_code=404, detail="Session unbekannt")
+    log.info("Run bearbeitet: %s (%s)", sid, ", ".join(fields.keys()))
     return {"id": sid, **fields}
 
 
 @app.delete("/api/agent/sessions/{sid}")
-def agent_session_delete(sid: str):
+async def agent_session_delete(sid: str):
     if not agent_session.delete_session(sid):
         raise HTTPException(status_code=404, detail="Session unbekannt")
+    await agent_registries.close(sid)
+    log.info("Run gelöscht: %s", sid)
     return {"deleted": sid}
 
 
 # ── statische Oberflaeche ───────────────────────────────────────────────────
+@app.middleware("http")
+async def _no_cache_frontend(request, call_next):
+    """Frontend-Assets immer revalidieren -> Browser laeuft nie auf altem Stand."""
+    resp = await call_next(request)
+    p = request.url.path
+    if p == "/" or p.startswith(("/js/", "/css/", "/vendor/")):
+        resp.headers["Cache-Control"] = "no-cache, must-revalidate"
+    return resp
+
+
 app.mount("/css", StaticFiles(directory=FRONTEND / "css"), name="css")
 app.mount("/js", StaticFiles(directory=FRONTEND / "js"), name="js")
 app.mount("/vendor", StaticFiles(directory=FRONTEND / "vendor"), name="vendor")

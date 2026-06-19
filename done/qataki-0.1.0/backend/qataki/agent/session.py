@@ -17,16 +17,11 @@ from pathlib import Path
 from uc_llm_provider import ChatMessage
 from uc_llm_provider.core.models import ToolResultBlock
 
+from .. import paths
 
-def _repo_root() -> Path:
-    here = Path(__file__).resolve()
-    for p in here.parents:
-        if (p / ".git").exists():
-            return p
-    return here.parents[3]
-
-
-_SESS_DIR = _repo_root() / "data" / "sessions"
+# Anker ueber paths (ehrt QATAKI_HOME) statt .git-Walk -> konsistent mit
+# config/projects/settings/artifacts, alles unter einem home/data.
+_SESS_DIR = paths.sessions_dir()
 
 
 def _now() -> str:
@@ -103,12 +98,65 @@ class Session:
                 ))
             # tool_use / system / final / error / note: nur Protokoll, kein Verlauf
         s._flush(pending)
+        s._repair_tool_calls()
         return s
 
     def _flush(self, pending: list) -> None:
         if pending:
             self.messages.append(ChatMessage(role="user", content=list(pending)))
             pending.clear()
+
+    @staticmethod
+    def _blocks(m) -> list:
+        return m.content if isinstance(m.content, list) else []
+
+    @staticmethod
+    def _btype(b):
+        return b.get("type") if isinstance(b, dict) else getattr(b, "type", None)
+
+    def _tool_use_ids(self, m) -> list:
+        if getattr(m, "role", None) != "assistant":
+            return []
+        out = []
+        for b in self._blocks(m):
+            if self._btype(b) == "tool_use":
+                bid = b.get("id") if isinstance(b, dict) else getattr(b, "id", None)
+                if bid:
+                    out.append(bid)
+        return out
+
+    def _tool_result_ids(self, m) -> set:
+        if getattr(m, "role", None) != "user":
+            return set()
+        out = set()
+        for b in self._blocks(m):
+            tid = b.get("tool_use_id") if isinstance(b, dict) else getattr(b, "tool_use_id", None)
+            if tid:
+                out.add(tid)
+        return out
+
+    def _repair_tool_calls(self) -> None:
+        """Sichert die API-Invariante: jede Assistant-Nachricht mit tool_use wird
+        von tool_result-Nachrichten fuer JEDE id gefolgt. Fehlende (z. B. durch
+        einen abgebrochenen Lauf) werden mit einem synthetischen Ergebnis ergaenzt,
+        damit ein erneuter Call nicht an unbeantworteten tool_call_ids scheitert."""
+        msgs = self.messages
+        repaired: list = []
+        for i, m in enumerate(msgs):
+            repaired.append(m)
+            ids = self._tool_use_ids(m)
+            if not ids:
+                continue
+            answered = self._tool_result_ids(msgs[i + 1]) if i + 1 < len(msgs) else set()
+            missing = [t for t in ids if t not in answered]
+            if missing:
+                synth = [ToolResultBlock(
+                    tool_use_id=t,
+                    content="(kein Ergebnis — Lauf wurde unterbrochen)",
+                    is_error=True,
+                ) for t in missing]
+                repaired.append(ChatMessage(role="user", content=synth))
+        self.messages = repaired
 
     # ── Verlauf erweitern (Verlauf + Protokoll) ─────────────────────────────
     def add_user(self, text: str) -> None:

@@ -48,3 +48,7 @@ data/
 
 # Archiv des alten Codes (nicht getrackt)
 _archive/
+
+# Credential stores (never commit — public repo)
+**/credentials.yaml
+**/credentials.yml

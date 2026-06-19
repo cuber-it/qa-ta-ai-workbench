@@ -7,10 +7,10 @@ Fallbacks. Die Datei wird bei jedem Zugriff frisch gelesen, damit Aenderungen
 ohne Neustart wirken.
 """
 import tomllib
-from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[2]
-CONFIG_PATH = REPO / "config.toml"
+from . import paths
+
+CONFIG_PATH = paths.config_file()
 
 _PROJECT_DEFAULTS = {
     "base_url": "",

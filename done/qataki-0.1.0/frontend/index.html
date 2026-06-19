@@ -14,7 +14,7 @@
     <!-- Bar 1 -->
     <header class="bar bar-top">
       <div class="menu" @click.outside="menuOpen = false">
-        <button class="menu-btn" @click="menuOpen = !menuOpen" aria-label="Menü">☰</button>
+        <button class="menu-btn" @click="menuOpen = !menuOpen" aria-label="Menü" title="Menü">☰</button>
         <div class="menu-list" x-show="menuOpen" x-cloak>
           <button class="menu-item" @click="loadProject()">Projekt laden</button>
           <hr class="menu-sep">
@@ -88,8 +88,12 @@
           <h2 class="pane-title">Dialog</h2>
           <div class="chat" x-ref="chat">
             <template x-for="(m, i) in dialog" :key="i">
-              <div class="msg" :class="'msg-' + m.role">
+              <div class="msg" :class="['msg-' + m.role, {queued: m.queued, cancelled: m.cancelled}]">
                 <div class="msg-body" x-text="m.text"></div>
+                <span class="msg-badge" x-show="m.queued" x-cloak>wartet…
+                  <button class="queued-x" @click.stop="removeQueued(m)" title="Aus Warteschlange entfernen">×</button>
+                </span>
+                <span class="msg-badge cancel" x-show="m.cancelled" x-cloak>abgebrochen</span>
                 <button class="copy-btn" x-data="{c:false}"
                         @click.stop="copy(m.text); c=true; setTimeout(()=>c=false,1200)"
                         x-text="c ? '✓' : '⧉'" :title="c ? 'kopiert' : 'kopieren'"></button>
@@ -104,29 +108,28 @@
           </div>
           <div class="composer">
             <textarea class="composer-input" rows="2" x-model="agentInput"
-              :placeholder="!activeProject ? 'Erst ein Projekt wählen…' : (!activeRunId ? 'Erst einen Run anlegen oder wählen…' : 'Aufgabe an den Agenten…  (Enter sendet, Shift+Enter = Zeilenumbruch)')"
+              :placeholder="!activeProject ? 'Erst ein Projekt wählen…' : (!activeRunId ? 'Erst einen Run anlegen oder wählen…' : (agentRunning ? 'Läuft – weitere Eingaben werden eingereiht…  (↑/↓ frühere)' : 'Aufgabe an den Agenten…  (Enter sendet, Shift+Enter = Umbruch, ↑/↓ History)'))"
               @keydown.enter.prevent="sendAgent()"
               @keydown.shift.enter.stop
-              :disabled="agentRunning || !activeRunId"></textarea>
+              @keydown.arrow-up="historyPrev($event)"
+              @keydown.arrow-down="historyNext($event)"
+              :disabled="!activeRunId"></textarea>
             <button class="btn btn-primary composer-send" @click="sendAgent()"
-              :disabled="agentRunning || !activeRunId || !agentInput.trim()">
-              <span x-show="!agentRunning">Senden</span>
-              <span x-show="agentRunning" x-cloak>läuft…</span>
-            </button>
+              :disabled="!activeRunId || !agentInput.trim()"
+              x-text="agentRunning ? 'Einreihen' : 'Senden'"></button>
+            <button class="btn composer-stop" @click="stopAgent()" :disabled="!agentRunning"
+              title="Laufenden Schritt abbrechen – Warteschlange läuft weiter">⏹ Stop</button>
           </div>
         </section>
-        <section class="pane pane-output">
-          <h2 class="pane-title">
-            Ausgabe
-            <span class="pane-meta" x-show="agentStatus" x-cloak x-text="agentStatus"></span>
-          </h2>
-          <div class="quad-grid">
+        <section class="pane pane-col">
+          <div class="stack">
 
             <div class="quad">
               <div class="quad-title">
                 <span>Aktivität<span class="live-dot" x-show="agentRunning" x-cloak></span></span>
                 <button class="quad-action" x-show="toolLog.length"
                         @click="toggleAllActivity()"
+                        title="Alle Tool-Einträge auf-/zuklappen"
                         x-text="allActivityCollapsed ? 'alle auf' : 'alle zu'"></button>
               </div>
               <div class="quad-body">
@@ -159,6 +162,26 @@
             </div>
 
             <div class="quad">
+              <div class="quad-title">Artefakte</div>
+              <div class="quad-body">
+                <ul class="art-list" x-show="artifacts.length">
+                  <template x-for="(a, i) in artifacts" :key="i">
+                    <li class="art-item" @dblclick="openArtifact(a)" :title="'Doppelklick öffnet ' + a.name">
+                      <span class="art-name" x-text="a.name"></span>
+                      <span class="art-size" x-text="fmtSize(a.size)"></span>
+                    </li>
+                  </template>
+                </ul>
+                <p class="muted" x-show="!artifacts.length">Screenshots, Videos, .feature-Dateien dieses Runs erscheinen hier (Doppelklick öffnet).</p>
+              </div>
+            </div>
+
+          </div>
+        </section>
+        <section class="pane pane-col">
+          <div class="stack">
+
+            <div class="quad">
               <div class="quad-title">Kontext</div>
               <div class="quad-body">
                 <ul class="skill-list" x-show="skills.length">
@@ -174,26 +197,73 @@
             </div>
 
             <div class="quad">
-              <div class="quad-title">Artefakte</div>
-              <div class="quad-body">
-                <ul class="art-list" x-show="artifacts.length">
-                  <template x-for="(a, i) in artifacts" :key="i">
-                    <li class="art-item" @dblclick="openArtifact(a)" :title="'Doppelklick öffnet ' + a.name">
-                      <span class="art-name" x-text="a.name"></span>
-                      <span class="art-size" x-text="fmtSize(a.size)"></span>
-                    </li>
-                  </template>
-                </ul>
-                <p class="muted" x-show="!artifacts.length">Screenshots, Videos, .feature-Dateien dieses Runs erscheinen hier (Doppelklick öffnet).</p>
-              </div>
-            </div>
-
-            <div class="quad">
               <div class="quad-title">Lauf</div>
               <div class="quad-body">
                 <p class="muted" x-show="!agentStatus && !agentCosts">Status und Kosten erscheinen hier.</p>
                 <p x-show="agentStatus" x-cloak><span class="muted">Status:</span> <span x-text="agentStatus"></span></p>
                 <div class="run-costs" x-show="agentCosts" x-cloak x-text="costLine"></div>
+              </div>
+            </div>
+
+          </div>
+        </section>
+        <section class="pane pane-col">
+          <div class="stack">
+
+            <div class="quad">
+              <div class="quad-title">Frei 1</div>
+              <div class="quad-body">
+                <p class="muted">Noch nicht belegt.</p>
+              </div>
+            </div>
+
+            <div class="quad quad-log">
+              <div class="quad-title">
+                <div class="view-seg">
+                  <button class="seg-btn" :class="{on: logView==='log'}" @click="setLogView('log')">Log</button>
+                  <button class="seg-btn" :class="{on: logView==='usage'}" @click="setLogView('usage')">Usage</button>
+                </div>
+                <div class="log-ctrls">
+                  <button class="log-btn" x-show="logView==='usage'" @click="loadUsage()" title="Aktualisieren">↻</button>
+                  <span class="log-lvls" x-show="logView==='log'">
+                    <button class="log-btn lv-debug" :class="{on: logFilter.DEBUG}" @click="toggleLogLevel('DEBUG')" title="Debug">Dbg</button>
+                    <button class="log-btn lv-info" :class="{on: logFilter.INFO}" @click="toggleLogLevel('INFO')" title="Info">Inf</button>
+                    <button class="log-btn lv-warn" :class="{on: logFilter.WARNING}" @click="toggleLogLevel('WARNING')" title="Warnung">Wrn</button>
+                    <button class="log-btn lv-err" :class="{on: logFilter.ERROR}" @click="toggleLogLevel('ERROR')" title="Fehler">Err</button>
+                    <button class="log-btn" :class="{on: logOnlyRun}" :disabled="!activeRunId" @click="toggleLogRun()" title="Nur aktueller Run">Run</button>
+                    <button class="log-btn" :class="{on: logHold}" @click="toggleLogHold()" title="Autoscroll anhalten">Halten</button>
+                  </span>
+                </div>
+              </div>
+              <div class="quad-body log-body" x-ref="logBody" x-show="logView==='log'">
+                <template x-for="(e, i) in visibleLogs" :key="i">
+                  <div class="log-line" :class="'lv-' + e.level.toLowerCase()">
+                    <span class="log-ts" x-text="e.ts.slice(11)"></span>
+                    <span class="log-lvl" x-text="logShort(e.level)"></span>
+                    <span class="log-run" x-show="e.run !== '-'" x-text="e.run.slice(0,6)"></span>
+                    <span class="log-msg" x-text="e.msg"></span>
+                  </div>
+                </template>
+                <p class="muted" x-show="!visibleLogs.length">Noch keine Logs.</p>
+              </div>
+              <div class="quad-body usage-body" x-show="logView==='usage'">
+                <div class="usage-sum">
+                  <span x-text="usage.totals.calls + ' Calls'"></span>
+                  <span>Σin <b x-text="fmt(usage.totals.input)"></b></span>
+                  <span>Σout <b x-text="fmt(usage.totals.output)"></b></span>
+                  <span>Σ <b x-text="fmt(usage.totals.total)"></b></span>
+                  <span class="usage-off" x-show="!usage.enabled" title="Token-Log ist deaktiviert">Log aus</span>
+                </div>
+                <template x-for="(e, i) in usage.entries" :key="i">
+                  <div class="usage-line">
+                    <span class="u-ts" x-text="e.ts.slice(11)"></span>
+                    <span class="u-prov" x-text="e.provider || '—'"></span>
+                    <span class="u-model" x-text="e.model" :title="e.model"></span>
+                    <span class="u-in" x-text="fmt(e.input)"></span>
+                    <span class="u-out" x-text="fmt(e.output)"></span>
+                  </div>
+                </template>
+                <p class="muted" x-show="!usage.entries.length">Noch kein Verbrauch erfasst.</p>
               </div>
             </div>
 
@@ -212,7 +282,7 @@
     <div class="modal">
       <div class="modal-head">
         <span>Über QATAKI</span>
-        <button class="btn-icon" @click="aboutOpen = false">×</button>
+        <button class="btn-icon" title="Schließen" @click="aboutOpen = false">×</button>
       </div>
       <div class="modal-body">
         <p><strong>QATAKI</strong> — QA Test Automation Workbench.</p>
@@ -226,7 +296,7 @@
     <div class="modal">
       <div class="modal-head">
         <span>Neuer Run</span>
-        <button class="btn-icon" @click="runModalOpen = false">×</button>
+        <button class="btn-icon" title="Schließen" @click="runModalOpen = false">×</button>
       </div>
       <div class="modal-body">
         <label class="field">
@@ -284,7 +354,7 @@
     <div class="modal">
       <div class="modal-head">
         <span>Run bearbeiten</span>
-        <button class="btn-icon" @click="runEditOpen = false">×</button>
+        <button class="btn-icon" title="Schließen" @click="runEditOpen = false">×</button>
       </div>
       <div class="modal-body">
         <label class="field">
@@ -334,7 +404,7 @@
     <div class="modal">
       <div class="modal-head">
         <span>Neues Projekt</span>
-        <button class="btn-icon" @click="newProjectOpen = false">×</button>
+        <button class="btn-icon" title="Schließen" @click="newProjectOpen = false">×</button>
       </div>
       <div class="modal-body">
         <label class="field">
@@ -377,7 +447,7 @@
     <div class="modal modal-lg">
       <div class="modal-head">
         <span>Settings</span>
-        <button class="btn-icon" @click="settingsOpen = false">×</button>
+        <button class="btn-icon" title="Schließen" @click="settingsOpen = false">×</button>
       </div>
 
       <div class="tabs">
@@ -611,7 +681,7 @@
                   <td class="row-actions">
                     <button class="btn-sm" @click="loadMcpTools(name)">Tools</button>
                     <button class="btn-sm" @click="testMcpServer(name)">Test</button>
-                    <button class="btn-sm danger" @click="removeMcpServer(name)">×</button>
+                    <button class="btn-sm danger" title="Server entfernen" @click="removeMcpServer(name)">×</button>
                   </td>
                 </tr>
               </template>

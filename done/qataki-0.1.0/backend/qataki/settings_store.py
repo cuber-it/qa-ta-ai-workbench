@@ -6,12 +6,10 @@ Settings-UI schreibt ueber save(). Was in settings.json fehlt, kommt aus der
 Config, was dort fehlt, aus den eingebauten Fallbacks.
 """
 import json
-from pathlib import Path
 
-from . import config
+from . import config, paths
 
-REPO = Path(__file__).resolve().parents[2]
-STORE = REPO / "data" / "settings.json"
+STORE = paths.data_dir() / "settings.json"
 
 DEFAULTS = {
     "provider_type": "anthropic",
@@ -22,6 +20,10 @@ DEFAULTS = {
     "agent_max_tokens": 16384,
     "agent_temperature": 0.3,
     "agent_max_iterations": 15,
+    # Logging: DEBUG | INFO | WARNING | ERROR (per System-Config aenderbar)
+    "log_level": "DEBUG",
+    # Token-Verbrauchslog (logs/token-usage.log) an/aus, Default aktiviert
+    "token_log": True,
 }
 
 

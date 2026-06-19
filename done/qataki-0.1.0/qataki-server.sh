@@ -51,9 +51,19 @@ start() {
   [ -x "$REPO/.venv/bin/python" ] || { echo "fehlt: $REPO/.venv/bin/python"; exit 1; }
   local access=(--no-access-log)
   [ "${QATAKI_ACCESS_LOG:-0}" = "1" ] && access=()
-  echo "starte QATAKI auf $HOST:$PORT (--reload) ..."
-  exec env PYTHONPATH=backend "$REPO/.venv/bin/python" -m uvicorn "$APP" \
-    --app-dir backend --host "$HOST" --port "$PORT" --reload --env-file .env "${access[@]}"
+  # bench-0.2.0: aktive Shelf-Quelle (agent-core, playwright-driver) live einbinden.
+  # PYTHONPATH stellt die Quelle vor die im venv installierten Kopien; --reload-dir
+  # laesst uvicorn die Quellordner mitbeobachten -> Edits greifen ohne Neuinstallation.
+  local SHELF; SHELF="$(cd "$REPO/../../shelf" && pwd)"
+  echo "starte QATAKI auf $HOST:$PORT (--reload, live shelf) ..."
+  exec env PYTHONPATH="backend:$SHELF/agent-core/src:$SHELF/playwright-driver/src:$SHELF/credentials/src" \
+    "$REPO/.venv/bin/python" -m uvicorn "$APP" \
+    --app-dir backend --host "$HOST" --port "$PORT" --reload \
+    --reload-dir backend \
+    --reload-dir "$SHELF/agent-core/src" \
+    --reload-dir "$SHELF/playwright-driver/src" \
+    --reload-dir "$SHELF/credentials/src" \
+    --env-file .env "${access[@]}"
 }
 
 status() {

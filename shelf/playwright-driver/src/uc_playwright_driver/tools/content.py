@@ -72,8 +72,8 @@ async def get_aria_snapshot(client: BrowserClient, selector: str = "body") -> st
 
 async def get_console_messages(client: BrowserClient) -> str:
     """Return recent console messages from the page."""
-    page     = await client.get_page()
-    messages = page.console_messages()
+    await client.get_page()
+    messages = client.console_messages()
     if not messages:
         return "(no console messages)"
     return "\n".join(f"[{m.type}] {m.text}" for m in messages[-50:])
@@ -81,8 +81,8 @@ async def get_console_messages(client: BrowserClient) -> str:
 
 async def get_page_requests(client: BrowserClient) -> str:
     """Return recent network requests made by the page."""
-    page     = await client.get_page()
-    requests = page.requests()
+    await client.get_page()
+    requests = client.requests()
     if not requests:
         return "(no requests recorded)"
     return "\n".join(

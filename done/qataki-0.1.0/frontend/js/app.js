@@ -2,6 +2,20 @@
 function app() {
   return {
     menuOpen: false,
+    // --- Live-Log (Frei 2) ---
+    logs: [],
+    logFilter: { DEBUG: false, INFO: true, WARNING: true, ERROR: true },
+    logOnlyRun: false,
+    logHold: false,
+    logView: 'log',                 // 'log' | 'usage'
+    usage: { entries: [], totals: { calls: 0, input: 0, output: 0, total: 0 }, enabled: true },
+    _logES: null,
+    get visibleLogs() {
+      const f = this.logFilter
+      let out = this.logs.filter(e => f[e.level])
+      if (this.logOnlyRun && this.activeRunId) out = out.filter(e => e.run === this.activeRunId)
+      return out
+    },
     settingsOpen: false,
     activeTab: 'llm',
     saved: false,
@@ -38,6 +52,10 @@ function app() {
     agentInput: '',
     agentRunning: false,
     dialog: [],
+    agentQueue: [],                 // wartende Eingaben, werden nach dem Lauf abgearbeitet
+    promptHistory: [],              // gesendete Prompts (Shell-artig, ↑/↓)
+    _histIdx: null,
+    _histDraft: '',
     toolLog: [],
     artifacts: [],
     allActivityCollapsed: false,
@@ -70,7 +88,10 @@ function app() {
       this.loadModels()
       this.pollStatus()
       this._pollTimer = setInterval(() => this.pollStatus(), 4000)
-      this.loadProjects()
+      this.loadProjects().then(() => this._restoreUi())
+      this.$watch('settingsOpen', () => this._saveUi())
+      this.$watch('activeTab', () => this._saveUi())
+      this._startLogStream()
     },
 
     async loadConfig() {
@@ -349,26 +370,38 @@ function app() {
       } catch (e) { console.error('save', e) }
     },
 
-    async sendAgent() {
+    sendAgent() {
       const text = this.agentInput.trim()
-      if (!text || this.agentRunning || !this.activeRunId) return
-      this.dialog.push({ role: 'user', text })
+      if (!text || !this.activeRunId) return
       this.agentInput = ''
+      this._pushHistory(text)
+      // Nachricht sofort sichtbar; laeuft schon einer -> einreihen.
+      const msg = { role: 'user', text, queued: this.agentRunning }
+      this.dialog.push(msg)
+      this._scrollChat()
+      if (this.agentRunning) { this.agentQueue.push(msg); return }
+      this._runAgent(text)
+    },
+
+    async _runAgent(text) {
       this.agentRunning = true
       this.agentStatus = 'läuft…'
       this.agentCosts = null
+      this._agentStopped = false
+      this._agentAbort = new AbortController()
       this._scrollChat()
       try {
         const r = await fetch('/api/agent/stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          signal: this._agentAbort.signal,
           body: JSON.stringify({
             session_id: this.activeRunId || '',
             project_id: this.activeProject.id,
             text,
           }),
         })
-        if (!r.ok || !r.body) { this.agentStatus = 'Fehler ' + r.status; this.agentRunning = false; return }
+        if (!r.ok || !r.body) { this.agentStatus = 'Fehler ' + r.status; return }
         const reader = r.body.getReader()
         const dec = new TextDecoder()
         let buf = ''
@@ -386,11 +419,71 @@ function app() {
           }
         }
       } catch (e) {
-        this.agentStatus = 'Verbindungsfehler'
+        this.agentStatus = (this._agentStopped || e.name === 'AbortError') ? 'gestoppt' : 'Verbindungsfehler'
+      } finally {
+        this._agentAbort = null
+        this.agentRunning = false
+        this.loadRuns()
+        this.loadArtifacts()
+        this._drainQueue()
       }
+    },
+
+    _drainQueue() {
+      if (!this.agentQueue.length) return
+      const msg = this.agentQueue.shift()
+      msg.queued = false
+      this._runAgent(msg.text)
+    },
+
+    removeQueued(msg) {
+      // Einzelnen wartenden Eintrag aus der Warteschlange nehmen.
+      const i = this.agentQueue.indexOf(msg)
+      if (i >= 0) { this.agentQueue.splice(i, 1); msg.queued = false; msg.cancelled = true }
+    },
+
+    stopAgent() {
+      // Bricht NUR den laufenden Schritt ab. Die Warteschlange laeuft danach
+      // weiter (ueber den finally-Drain in _runAgent).
+      if (!this.agentRunning) return
+      this._agentStopped = true
+      if (this._agentAbort) this._agentAbort.abort()
       this.agentRunning = false
-      this.loadRuns()
-      this.loadArtifacts()
+      this.agentStatus = this.agentQueue.length
+        ? 'übersprungen – Warteschlange läuft weiter' : 'gestoppt'
+    },
+
+    // ── Prompt-History (↑/↓ wie in der Shell) ────────────────────────
+    _pushHistory(text) {
+      if (this.promptHistory[this.promptHistory.length - 1] !== text) {
+        this.promptHistory.push(text)
+        if (this.promptHistory.length > 200) this.promptHistory.shift()
+      }
+      this._histIdx = null; this._histDraft = ''
+    },
+    historyPrev(e) {
+      const ta = e.target, v = ta.value
+      if (v.lastIndexOf('\n', ta.selectionStart - 1) !== -1) return   // nicht in erster Zeile -> normal
+      if (!this.promptHistory.length) return
+      e.preventDefault()
+      if (this._histIdx === null) { this._histDraft = this.agentInput; this._histIdx = this.promptHistory.length }
+      this._histIdx = Math.max(0, this._histIdx - 1)
+      this.agentInput = this.promptHistory[this._histIdx]
+      this.$nextTick(() => { ta.selectionStart = ta.selectionEnd = ta.value.length })
+    },
+    historyNext(e) {
+      const ta = e.target, v = ta.value
+      if (this._histIdx === null) return                              // nicht im History-Modus
+      if (v.indexOf('\n', ta.selectionStart) !== -1) return           // nicht in letzter Zeile -> normal
+      e.preventDefault()
+      this._histIdx++
+      if (this._histIdx >= this.promptHistory.length) {
+        this._histIdx = null
+        this.agentInput = this._histDraft
+      } else {
+        this.agentInput = this.promptHistory[this._histIdx]
+      }
+      this.$nextTick(() => { ta.selectionStart = ta.selectionEnd = ta.value.length })
     },
 
     _onAgentEvent(ev) {
@@ -430,6 +523,44 @@ function app() {
     _scrollChat() {
       this.$nextTick(() => { const el = this.$refs.chat; if (el) el.scrollTop = el.scrollHeight })
     },
+
+    // --- Live-Log (Frei 2) ---
+    _startLogStream() {
+      if (this._logES) return
+      const es = new EventSource('/api/logs/stream?backfill=200')
+      es.onmessage = (ev) => {
+        let e
+        try { e = JSON.parse(ev.data) } catch (_) { return }
+        this.logs.push(e)
+        if (this.logs.length > 1000) this.logs.splice(0, this.logs.length - 1000)
+        if (!this.logHold) this._scrollLog()
+        // Realtime-Usage: jeder LLM-Call erzeugt genau eine "LLM-Antwort"-Zeile.
+        if (this.logView === 'usage' && e.name === 'uc_agent_core.loop'
+            && typeof e.msg === 'string' && e.msg.startsWith('LLM-Antwort')) {
+          this.loadUsage()
+        }
+      }
+      // EventSource reconnectet bei Fehler automatisch
+      this._logES = es
+    },
+    _scrollLog() {
+      this.$nextTick(() => { const el = this.$refs.logBody; if (el) el.scrollTop = el.scrollHeight })
+    },
+    toggleLogLevel(lv) { this.logFilter[lv] = !this.logFilter[lv] },
+    toggleLogRun() { this.logOnlyRun = !this.logOnlyRun; if (!this.logHold) this._scrollLog() },
+    toggleLogHold() { this.logHold = !this.logHold; if (!this.logHold) this._scrollLog() },
+    logShort(lv) { return { DEBUG: 'DBG', INFO: 'INF', WARNING: 'WRN', ERROR: 'ERR' }[lv] || lv },
+    setLogView(v) {
+      this.logView = v
+      if (v === 'usage') this.loadUsage()
+    },
+    async loadUsage() {
+      try {
+        const r = await fetch('/api/usage?limit=500')
+        if (r.ok) this.usage = await r.json()
+      } catch (_) { /* still bleiben */ }
+    },
+    fmt(n) { return (n || 0).toLocaleString('de-DE') },
 
     // ── Projekte / Runs ──────────────────────────────────────────────
     async loadProjects() {
@@ -483,6 +614,7 @@ function app() {
       this.activeProject = p
       this.clearRun()
       this.loadRuns()
+      this._saveUi()
     },
 
     async deleteProject(p) {
@@ -492,6 +624,7 @@ function app() {
       await this.loadProjects()
       if (this.activeProject && this.activeProject.id === p.id) {
         this.activeProject = null; this.runs = []; this.newRun()
+        this._saveUi()
       }
     },
 
@@ -522,6 +655,7 @@ function app() {
       this.activeRunId = ''
       this.dialog = []; this.toolLog = []; this.artifacts = []
       this.agentCosts = null; this.agentStatus = ''
+      this.promptHistory = []; this._histIdx = null; this._histDraft = ''
     },
 
     toggleAllActivity() {
@@ -560,6 +694,7 @@ function app() {
           this.clearRun()
           this.activeRunId = run.id
           await this.loadRuns()
+          this._saveUi()
         }
       } catch (e) { console.error('createRun', e) }
     },
@@ -567,11 +702,40 @@ function app() {
     async openRun(r) {
       this.clearRun()
       this.activeRunId = r.id
+      this._saveUi()
       try {
         const res = await fetch('/api/agent/sessions/' + encodeURIComponent(r.id))
         if (res.ok) this._rehydrate((await res.json()).events || [])
       } catch (e) { console.error('openRun', e) }
       this.loadArtifacts()
+    },
+
+    _saveUi() {
+      try {
+        localStorage.setItem('qataki.ui', JSON.stringify({
+          projectId: this.activeProject ? this.activeProject.id : '',
+          runId: this.activeRunId || '',
+          settingsOpen: !!this.settingsOpen,
+          activeTab: this.activeTab || 'llm',
+        }))
+      } catch (e) {}
+    },
+
+    async _restoreUi() {
+      let ui
+      try { ui = JSON.parse(localStorage.getItem('qataki.ui') || '{}') } catch (e) { return }
+      if (!ui) return
+      if (ui.activeTab) this.activeTab = ui.activeTab
+      if (ui.settingsOpen) this.settingsOpen = true
+      if (!ui.projectId) return
+      const p = this.projects.find(x => x.id === ui.projectId)
+      if (!p) return
+      this.activeProject = p
+      await this.loadRuns()
+      if (ui.runId) {
+        const r = this.runs.find(x => x.id === ui.runId)
+        if (r) await this.openRun(r)
+      }
     },
 
     async rerunRun(r) {
@@ -653,8 +817,12 @@ function app() {
     },
 
     _rehydrate(events) {
+      this.promptHistory = []; this._histIdx = null; this._histDraft = ''
       for (const e of events) {
-        if (e.type === 'user') this.dialog.push({ role: 'user', text: e.text })
+        if (e.type === 'user') {
+          this.dialog.push({ role: 'user', text: e.text })
+          if (this.promptHistory[this.promptHistory.length - 1] !== e.text) this.promptHistory.push(e.text)
+        }
         else if (e.type === 'assistant') { const t = this._assistantText(e.content); if (t) this.dialog.push({ role: 'assistant', text: t }) }
         else if (e.type === 'tool_use') this.toolLog.push({ id: e.id, name: e.name, input: this._fmtInput(e.input), result: null, is_error: false, collapsed: this.allActivityCollapsed })
         else if (e.type === 'tool_result') {

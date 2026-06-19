@@ -31,7 +31,7 @@ def sess_dir(tmp_path, monkeypatch):
 def test_session_roundtrip(sess_dir):
     s = S.Session.create(title="t")
     s.add_user("hi")
-    s.add_assistant([TextBlock(text="ok"), ToolUseBlock(id="1", name="pw__get_title", input={})])
+    s.add_assistant([TextBlock(text="ok"), ToolUseBlock(id="1", name="pw__title", input={})])
     s.add_tool_results([ToolResultBlock(tool_use_id="1", content="Title", is_error=False)])
     s.add_assistant([TextBlock(text="done")])
     s.log("final", text="done")
@@ -67,14 +67,14 @@ def test_prompt_loads():
 
 # ── Hooks / Validators ───────────────────────────────────────────────────────
 def test_hooks_deny_and_check():
-    g = hooks.deny_tools("pw__navigate")
-    assert g("pw__navigate", {}) is not None
-    assert g("pw__get_title", {}) is None
+    g = hooks.deny_tools("pw__open")
+    assert g("pw__open", {}) is not None
+    assert g("pw__title", {}) is None
 
     hooks.tool_guards.clear()
     hooks.tool_guards.append(g)
     try:
-        assert hooks.check_tool("pw__navigate", {}) is not None
+        assert hooks.check_tool("pw__open", {}) is not None
         assert hooks.check_tool("skill__list", {}) is None
     finally:
         hooks.tool_guards.clear()
@@ -101,8 +101,11 @@ async def test_registry_specs_and_dispatch(monkeypatch):
     reg = ToolRegistry()
     names = [s.name for s in await reg.tool_specs()]
     assert "skill__list" in names and "skill__load" in names
-    assert sum(n.startswith("pw__") for n in names) == 14
-    assert "pw__screenshot" in names
+    pw = [n for n in names if n.startswith("pw__")]
+    assert len(pw) >= 70
+    assert "pw__shot" in names
+    for n in ("pw__visible", "pw__aria", "pw__check", "pw__select"):
+        assert n in names
     assert not any(n.startswith("mcp__") for n in names)
 
     out, err = await reg.dispatch("skill__load", {"name": "write-feature"})
