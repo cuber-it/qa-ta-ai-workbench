@@ -481,3 +481,30 @@ body {
 .usage-line .u-prov { color: var(--accent); }
 .usage-line .u-model { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .usage-line .u-in, .usage-line .u-out { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* Run-Einstellungen-Floater */
+.runcfg { display: flex; flex-direction: column; gap: .5rem; }
+.rc-field { display: flex; flex-direction: column; gap: .2rem; font-size: 12px; color: var(--muted); }
+.rc-field > span { font-weight: 600; }
+.rc-field input[type="text"], .rc-field select, .rc-field textarea {
+  width: 100%; box-sizing: border-box; padding: .35rem .5rem; font-size: 13px;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--panel); color: var(--text);
+}
+.rc-field textarea { resize: vertical; }
+.rc-check { flex-direction: row; align-items: center; gap: .45rem; }
+.rc-check input { margin: 0; }
+.rc-check > span { font-weight: 400; color: var(--text); }
+.rc-limits { border-top: 1px solid var(--border); padding-top: .5rem; margin-top: .25rem; }
+.rc-limits-head { font-size: 12px; font-weight: 600; margin-bottom: .3rem; color: var(--text); }
+.rc-limit { display: flex; justify-content: space-between; font-size: 12px; padding: .12rem 0; color: var(--muted); }
+.rc-limit b { font-variant-numeric: tabular-nums; color: var(--text); }
+.rc-actions { display: flex; align-items: center; gap: .6rem; margin-top: .4rem; }
+.rc-save { padding: .4rem .9rem; border: none; border-radius: 6px; background: var(--accent); color: #fff; cursor: pointer; font-size: 13px; }
+.rc-save:hover { filter: brightness(1.05); }
+.rc-saved { color: #15803d; font-size: 12px; }
+
+/* Browser-Ansicht (Screencast) */
+.scview-body { display: flex; flex-direction: column; gap: .4rem; min-height: 0; }
+.scview-status { font-size: 12px; }
+.sc-live { color: #15803d; font-weight: 600; }
+.scview-canvas { width: 100%; height: auto; display: block; border: 1px solid var(--border); border-radius: 6px; background: #fff; }

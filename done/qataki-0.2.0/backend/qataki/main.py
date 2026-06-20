@@ -440,6 +440,7 @@ class ProjectIn(BaseModel):
     description: str = ""
     artifacts_path: str = ""
     default_provider: str = ""
+    default_model: str = ""
 
 
 @app.get("/api/projects")
@@ -469,6 +470,7 @@ def post_project(body: ProjectIn):
         description=body.description or d["description"],
         artifacts_path=folder,
         default_provider=body.default_provider or d["default_provider"],
+        default_model=body.default_model or d.get("default_model", ""),
     )
     log.info("Projekt angelegt: %s (id=%s)", body.name, proj.get("id", "?"))
     return proj
@@ -548,6 +550,71 @@ async def agent_stream(body: AgentMessageIn):
                 yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
         finally:
             applog.clear_run()
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.get("/api/agent/runs/{sid}/screencast")
+async def agent_screencast(sid: str):
+    """Live-Bild des Browsers eines Runs via CDP Page.startScreencast (SSE).
+    JPEG-Frames als base64. Funktioniert headed wie headless."""
+    async def gen():
+        cdp = None
+        try:
+            # Browser+Seite entstehen erst beim ersten pw-Tool -> warten.
+            page = None
+            waited = 0.0
+            while waited < 300:
+                reg = agent_registries.peek(sid)
+                client = getattr(reg, "_browser", None) if reg is not None else None
+                if client is not None and client.list_tabs():
+                    page = await client.get_page()
+                    break
+                yield ": warte auf browser\n\n"
+                await asyncio.sleep(1.0)
+                waited += 1.0
+            if page is None:
+                yield f"data: {json.dumps({'status': 'no-page'})}\n\n"
+                return
+
+            cdp = await page.context.new_cdp_session(page)
+            loop = asyncio.get_event_loop()
+            q: asyncio.Queue = asyncio.Queue(maxsize=2)
+
+            def on_frame(params):
+                # Jeden Frame sofort acken, sonst stoppt Chrome den Stream.
+                try:
+                    loop.create_task(cdp.send("Page.screencastFrameAck",
+                                              {"sessionId": params.get("sessionId")}))
+                except Exception:
+                    pass
+                if q.full():
+                    try: q.get_nowait()
+                    except Exception: pass
+                try: q.put_nowait(params)
+                except Exception: pass
+
+            cdp.on("Page.screencastFrame", on_frame)
+            await cdp.send("Page.startScreencast", {
+                "format": "jpeg", "quality": 55,
+                "maxWidth": 1280, "maxHeight": 800, "everyNthFrame": 1,
+            })
+            yield f"data: {json.dumps({'status': 'live'})}\n\n"
+
+            while True:
+                params = await q.get()
+                md = params.get("metadata", {}) or {}
+                yield "data: " + json.dumps({
+                    "frame": params.get("data", ""),
+                    "w": md.get("deviceWidth"), "h": md.get("deviceHeight"),
+                }) + "\n\n"
+        finally:
+            if cdp is not None:
+                try: await cdp.send("Page.stopScreencast")
+                except Exception: pass
+                try: await cdp.detach()
+                except Exception: pass
 
     return StreamingResponse(gen(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
@@ -639,7 +706,7 @@ def create_run(body: RunIn):
         headless=body.headless,
         description=body.description,
         artifacts_path=body.artifacts_path or proj.get("artifacts_path", ""),
-        model=body.model,
+        model=body.model or proj.get("default_model", ""),
         temperature=body.temperature,
     )
     log.info("Run angelegt: %s (id=%s, projekt=%s)", s.title, s.id, s.project_id)
@@ -744,6 +811,7 @@ class SessionEditIn(BaseModel):
     temperature: str | None = None
     description: str | None = None
     headless: bool | None = None
+    artifacts_path: str | None = None
 
 
 @app.post("/api/agent/sessions/{sid}/edit")

@@ -21,6 +21,7 @@ base_url = ""                   # z. B. "https://staging.example.com"
 description = ""
 artifacts_base = "~/.qataki"    # Basis; je Projekt entsteht <base>/<projektname>, je Run darunter <run-id>
 default_provider = "openai"     # "" = globale LLM-Einstellung, sonst "openai"/"anthropic"
+default_model = ""              # leer = Provider-Default; sonst z. B. "gpt-4o-mini"
 
 [run_defaults]
 headless = true

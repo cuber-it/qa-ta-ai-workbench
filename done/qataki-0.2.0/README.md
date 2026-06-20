@@ -44,10 +44,17 @@ Then open <http://127.0.0.1:12288>.
 
 ## Where it is right now
 
-The `v0.1.0` tag is one snapshot: an agentic workbench that creates projects and
-runs, drives an LLM over a web application with Playwright tools, produces readable
-`.feature` artifacts, attaches capabilities over MCP, and tracks cost per run. The
-branch you are looking at may already have wandered off somewhere else.
+`v0.2.0` is the current snapshot. It is still the agentic workbench from `0.1.0` —
+create projects and runs, drive an LLM over a web application with Playwright tools,
+produce readable artifacts, attach capabilities over MCP, keep cost on a leash — but
+the surface has changed shape. The UI is now a dashboard of floating tiles you
+arrange yourself. A project carries a default provider and model that each new run
+inherits and can override. A run's settings are editable and persist for that run
+alone. And a browser-view tile can mirror what the agent's browser is doing, live,
+whenever you want to watch. Underneath, the agent calls its tools natively. As ever,
+the branch you are looking at may already have wandered off somewhere else.
+
+For the blow-by-blow, see [CHANGES.md](CHANGES.md).
 
 ## Directions I'm poking at (no promises)
 
@@ -60,4 +67,4 @@ branch you are looking at may already have wandered off somewhere else.
 
 ## License
 
-See [LICENSE](LICENSE).
+See [LICENSE](../../LICENSE) — GNU AGPL-3.0.

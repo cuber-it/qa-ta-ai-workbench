@@ -204,7 +204,8 @@ def list_sessions(project_id: str | None = None) -> list[dict]:
     out = []
     for p in sorted(_SESS_DIR.glob("*.jsonl")):
         meta = {"id": p.stem, "title": "", "created_at": None, "events": 0, "project_id": "",
-                "url": "", "provider": "", "model": "", "temperature": "", "description": "", "headless": True}
+                "url": "", "provider": "", "model": "", "temperature": "", "description": "", "headless": True,
+                "artifacts_path": ""}
         try:
             lines = [l for l in p.read_text(encoding="utf-8").splitlines() if l.strip()]
             meta["events"] = len(lines)
@@ -219,6 +220,7 @@ def list_sessions(project_id: str | None = None) -> list[dict]:
                 meta["temperature"] = first.get("temperature", "")
                 meta["description"] = first.get("description", "")
                 meta["headless"] = first.get("headless", True)
+                meta["artifacts_path"] = first.get("artifacts_path", "")
         except Exception:
             pass
         if project_id is not None and meta["project_id"] != project_id:
@@ -265,7 +267,7 @@ def rename_session(session_id: str, title: str) -> bool:
     return True
 
 
-_EDITABLE = ("title", "url", "provider", "model", "temperature", "description", "headless")
+_EDITABLE = ("title", "url", "provider", "model", "temperature", "description", "headless", "artifacts_path")
 
 
 def update_session(session_id: str, fields: dict) -> bool:

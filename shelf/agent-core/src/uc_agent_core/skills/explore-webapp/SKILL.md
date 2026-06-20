@@ -10,7 +10,7 @@ Navigationswege), das spaeter als Grundlage fuer Tests dient.
 Schritte:
 1. Mit pw__open die Start-URL oeffnen.
 2. pw__title und pw__url pruefen — bist du, wo du sein willst?
-3. pw__page_text holen und den sichtbaren Inhalt grob einordnen
+3. pw__content holen und den sichtbaren Inhalt grob einordnen
    (Ueberschriften, Hauptbereiche, Formulare).
 4. Interaktive Elemente erfassen: pw__find_role fuer button, link, textbox,
    checkbox; pw__links fuer die Navigation.

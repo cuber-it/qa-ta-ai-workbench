@@ -1,77 +1,108 @@
-# QATAKI
+# Concept
 
-Concept and architecture.
+QATAKI exists to answer one question, and to keep answering it as the answer
+changes: where can an AI agent genuinely help with the everyday work of QA and
+test automation, and where does it have to stay out of the way?
 
-QATAKI is a workbench for designing REST and GUI tests together with an AI agent. The result is a readable, tool-agnostic test description that the agent translates into an executable target. The name carries its three pillars: Quality Assurance, Test Automation, and AI.
+The honest version of that question has two halves, and the second half matters
+more than the first.
 
-## Why not just an AI coding assistant
+## Two hard rules
 
-You can already point a general AI agent at a website or a REST API, have it probe the system, and produce a test. The limitation is not capability, it is persistence. With a general assistant every session starts from zero: the format has to be re-explained, throwaway glue and ad-hoc skills are written each time, and the working context has to be rebuilt and defended against its own limits.
+**The human keeps the reins.** The agent proposes, explores, drafts, and
+maintains. It does not decide on its own what ships, and it never runs unattended
+in a way that matters. There is always a person who can stop it — a killswitch is
+a first-class part of the system, not an afterthought — and cost is on a leash by
+construction: per-run, per-day and per-month limits that refuse the call rather
+than apologise after it.
 
-QATAKI removes that. It encodes the format, the workflow, the project context, and a reusable knowledge base once. When a project is opened, the agent already knows them. The agent itself is a commodity; the value is the persistent context and the maintained artifacts around it.
+**The rough edges of AI stay in the workshop.** This is the load-bearing idea.
+The model helps *author* and *maintain* tests. The test that comes out the other
+end is meant to be plain, deterministic, and able to stand on its own — no model
+in the loop at run time, nothing that "self-heals", nothing that behaves
+differently on a Tuesday. If a test passes, it passed for a reason you can read.
+CI never phones a model.
 
-## Outcome
+## The bet
 
-Two paths produce the same kind of artifact:
+Most of the cost of test automation is not writing the first test. It is the
+second year: keeping hundreds of tests honest while the application underneath
+them keeps moving. That maintenance is exactly the tedious, pattern-heavy work an
+agent is good at — *if* you let it work on readable artifacts instead of a tangle
+of brittle code.
 
-1. Authoring. In dialogue with the agent, REST and GUI tests are designed. The output is a test description in two files (below), not a generated script.
-2. Ingestion. Existing Playwright scripts, including recorder and codegen output, are read in, analysed, reviewed with the author, and lifted into the same format.
+So QATAKI treats the **readable artifact** as the durable thing. The agent
+explores an application with browser tools, and what it produces is a plain,
+tool-agnostic description of behaviour (Gherkin-style `.feature` today) that a
+human can read and a generator can turn into runnable code — and, the other
+direction, lift existing scripts back into the same shape. The model is the
+author and the editor. The artifact is the product. The runner is a detail you
+can swap.
 
-The durable result is a maintained, reusable, tool-agnostic test description per project, from which executable tests are generated on demand.
+## What it's made of
 
-## Architecture
+QATAKI is not a framework you adopt. It is a small set of independent building
+blocks (the `shelf/`) wired together into a thin app, each usable on its own in a
+plain script without the rest:
 
-### Two artifacts
+- a pure Playwright **driver** for the hands;
+- one HTTP **LLM interface** over several providers, with no vendor SDKs, so the
+  brain is replaceable;
+- a **cost guard** that sits in front of every call;
+- a **credential store** the agent refers to by handle and never sees the values
+  of;
+- an **agentic loop** that calls tools natively, streams its steps, can be
+  cancelled, and keeps host concerns injected rather than baked in.
 
-`.feature` (Gherkin): the high-level behaviour of a scenario. Readable, standard Gherkin, and the durable tool-agnostic asset.
+On top sits the workbench itself: projects and runs, a dashboard of tiles you
+arrange yourself, live logs and cost, capabilities attached over MCP, and — when
+you want to watch — a live view of the agent's browser.
 
-`.steps` (table): the concrete execution per step as `Action | Data | Expected`. This is a knowledge base. Once it is known how to perform a step against a given target, it is stored and reused across scenarios. It is a step-definition library held as agent-maintained data instead of hand-written glue.
+## Compared with the heavyweights
 
-The two files stay separate and are never nested, to keep both readable.
+The point is not that the established tools are wrong. They are mostly very good
+at what they set out to do. QATAKI makes a different, narrower bet, and it helps
+to say so plainly.
 
-Example:
+**Robot Framework** is the closest in spirit: keyword-driven, tabular, genuinely
+readable, with a deep library ecosystem and years of production use. If you want
+a mature framework to *adopt*, it is a better answer than this will ever be. The
+difference is where the work comes from and where it goes. Robot is the
+destination you write toward, by hand or with generators bolted on the side;
+QATAKI is the workshop, with the AI doing the authoring and the upkeep, and it
+stays deliberately agnostic about the destination — Robot could be one of them.
+QATAKI shares Robot's taste for readable, keyword/step-layered tests; it just
+doesn't want to *be* the runtime.
 
-```gherkin
-# login.feature
-Scenario: Successful login
-  Given the user is on the login page
-  When the user logs in
-  Then the dashboard is shown
-```
+**Cucumber and BDD** put business-readable `.feature` files in front of
+step-definition code. QATAKI keeps the readable feature file but treats it as the
+artifact of record rather than a thin veneer over one specific stack, and lets the
+agent — not a human typing glue — keep features and steps in sync.
 
-```
-# login.steps  (step "When the user logs in")
-| Action                          | Data               | Expected                       |
-| open /login                     |                    | login form visible             |
-| find role=textbox name="User"   | user@example.com   |                                |
-| find role=textbox name="Pass"   | <secret:login_pw>  |                                |
-| find role=button  name="Submit" |                    | redirect /dashboard, token set |
-```
+**Selenium, Cypress, Playwright** are the muscle: engines and runners you still
+drive by hand. QATAKI uses Playwright as one of its blocks. These are not rivals
+so much as the layer the output can target. Their bet is a great engine plus a
+good runner; ours is that the tedious authoring and upkeep on top of that engine
+is where an agent earns its keep.
 
-### Principles
+**The codeless / AI platforms** — record-and-playback suites, "self-healing"
+locators, commercial low-code tools — make the opposite trade on purpose. They
+push AI and heuristics *into the running test*: locators that heal themselves,
+models that adapt at execution, usually inside a platform you license and live in.
+That buys real convenience. It also means your green is partly a model's opinion,
+your tests are harder to read and to diff, and you do not fully own the result.
+QATAKI puts the AI on the other side of the line: it helps you build the test,
+then gets out, so what runs in CI is plain, ownable, and the same every time. The
+price is honest — you give up the self-healing safety net in exchange for tests
+you can trust without a model in the room.
 
-The agent owns both files and is always the translator. There are no hand-maintained step definitions and no glue code to keep in sync. A single hand keeps `.feature` and `.steps` consistent.
+## What it is not
 
-Universal verbs, neutral targets. Step actions use the universal interaction verbs that every automation tool shares (open, find, click, fill, and so on) with a neutral target descriptor (`role`, `name`, `text`, `testid`). The executable tool is only a renderer of this. The tool-specific flavour lives solely in how an element is addressed, never in the verb.
+Not a product, not a stable API, not a roadmap I owe anyone. It is a personal lab
+on a homelab, and it changes its mind. Some of what is described here is built and
+some is a direction I'm poking at; the branch in front of you may already have
+wandered off. Take what's useful, ignore the rest.
 
-The agnostic boundary is the `.feature`. Targeting a different execution tool means regenerating `.steps` from the `.feature`, not keeping `.steps` neutral. The `.feature` is the lasting agnostic asset.
-
-MCP-native agent. Capabilities are loaded as MCP servers, including the ability to probe the target so that `.steps` can be filled correctly. Playwright is integrated as the GUI step vocabulary and execution target, not as a recorder.
-
-Secrets and parameters are tokens in the `Data` column (`<secret:…>`, `${baseUrl}`), resolved at execution time.
-
-### Pipeline
-
-```
-.feature   intent       designed in dialogue, written by the agent
-   |
-.steps     execution    filled by the agent by probing the target   (knowledge base)
-   |
-target     executable   rendered by the agent: Playwright for GUI, a REST helper library for REST
-```
-
-Ingestion runs the same pipeline in reverse: an existing script maps near-mechanically to `.steps`, while the `.feature` is inferred and confirmed with the author.
-
-### Scope
-
-The first milestone is authoring and ingestion into `.feature` + `.steps` per project. Translation to an executable target and execution follow as a second milestone.
+The one thing that does not move is the line: the AI helps in the workshop, the
+human keeps the reins, and whatever ships is plain, deterministic, and stands on
+its own.

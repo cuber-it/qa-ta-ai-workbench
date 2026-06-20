@@ -348,6 +348,71 @@
             </div>
 
           
+            <div class="quad" data-fl="runcfg" :class="{ floating: isFloating('runcfg'), 'is-hidden': !isVisible('runcfg') }" :style="quadStyle('runcfg')">
+              <button class="fl-close" @click.stop="closePanel('runcfg')" title="Schließen">×</button>
+              <button class="fl-pin" @click.stop="togglePin('runcfg')" :title="isFloating('runcfg') ? 'Andocken' : 'Lösen (frei platzieren)'" x-text="isFloating('runcfg') ? '📍' : '📌'"></button>
+              <div class="quad-title" @mousedown="floaterDown('runcfg', $event)" @dblclick.stop="toggleTileHeight('runcfg')">Run-Einstellungen</div>
+              <div class="quad-body">
+                <template x-if="!activeRunId">
+                  <p class="muted">Kein Lauf gewählt.</p>
+                </template>
+                <template x-if="activeRunId">
+                  <div class="runcfg">
+                    <label class="rc-field"><span>Name</span><input type="text" x-model="runForm.title"></label>
+                    <label class="rc-field"><span>URL</span><input type="text" x-model="runForm.url" placeholder="https://…"></label>
+                    <label class="rc-field"><span>Provider</span>
+                      <select x-model="runForm.provider" @change="runForm.model = ''">
+                        <option value="">(Projekt-Default)</option>
+                        <template x-for="p in settings.providers" :key="p"><option :value="p" x-text="p"></option></template>
+                      </select>
+                    </label>
+                    <label class="rc-field"><span>Modell</span>
+                      <select x-model="runForm.model">
+                        <option value="" :selected="!runForm.model">(Provider-Standard)</option>
+                        <template x-for="m in modelsFor(runForm.provider)" :key="m"><option :value="m" :selected="m===runForm.model" x-text="m"></option></template>
+                        <template x-if="runForm.model &amp;&amp; !modelsFor(runForm.provider).includes(runForm.model)"><option :value="runForm.model" selected x-text="runForm.model + ' (gespeichert)'"></option></template>
+                      </select>
+                    </label>
+                    <label class="rc-field"><span>Temperature</span><input type="text" x-model="runForm.temperature" placeholder="(Default)"></label>
+                    <label class="rc-field rc-check"><input type="checkbox" x-model="runForm.headless"><span>Headless (Browser unsichtbar)</span></label>
+                    <label class="rc-field"><span>Artefaktpfad</span><input type="text" x-model="runForm.artifacts_path" placeholder="~/.qataki/…"></label>
+                    <label class="rc-field"><span>Beschreibung</span><textarea rows="2" x-model="runForm.description"></textarea></label>
+
+                    <div class="rc-limits" x-show="budget" x-cloak>
+                      <div class="rc-limits-head">Token-Limits <span class="muted">— global (Budget/.env), pro Run folgt</span></div>
+                      <div class="rc-limit"><span>Tokens/Run hart</span><b x-text="budget &amp;&amp; budget.limits ? budget.limits.hard_tokens_per_run.toLocaleString() : '–'"></b></div>
+                      <div class="rc-limit"><span>Tokens/Run soft</span><b x-text="budget &amp;&amp; budget.limits ? budget.limits.soft_tokens_per_run.toLocaleString() : '–'"></b></div>
+                      <div class="rc-limit"><span>Sparmodus ab</span><b x-text="budget &amp;&amp; budget.limits ? budget.limits.sparmode_tokens.toLocaleString() : '–'"></b></div>
+                      <div class="rc-limit"><span>USD/Run hart</span><b x-text="budget &amp;&amp; budget.limits ? ('$' + budget.limits.hard_usd_per_run) : '–'"></b></div>
+                      <div class="rc-limit"><span>Bestätigung ab</span><b x-text="budget &amp;&amp; budget.limits ? ('$' + budget.limits.confirm_above_usd) : '–'"></b></div>
+                    </div>
+
+                    <div class="rc-actions">
+                      <button class="rc-save" @click="saveRunCfg()">Speichern</button>
+                      <span class="rc-saved" x-show="runCfgSaved" x-cloak>✓ gespeichert</span>
+                    </div>
+                  </div>
+                </template>
+              </div>
+              <div class="fl-resize" x-show="isFloating('runcfg')" x-cloak @mousedown="floaterResizeDown('runcfg', $event)"></div>
+            </div>
+
+            <div class="quad" data-fl="browserview" :class="{ floating: isFloating('browserview'), 'is-hidden': !isVisible('browserview') }" :style="quadStyle('browserview')">
+              <button class="fl-close" @click.stop="closePanel('browserview')" title="Schließen">×</button>
+              <button class="fl-pin" @click.stop="togglePin('browserview')" :title="isFloating('browserview') ? 'Andocken' : 'Lösen (frei platzieren)'" x-text="isFloating('browserview') ? '📍' : '📌'"></button>
+              <div class="quad-title" @mousedown="floaterDown('browserview', $event)" @dblclick.stop="toggleTileHeight('browserview')">Browser-Ansicht</div>
+              <div class="quad-body scview-body">
+                <div class="scview-status">
+                  <span x-show="!activeRunId" x-cloak class="muted">Kein Lauf gewählt.</span>
+                  <span x-show="activeRunId &amp;&amp; scStatus==='warten'" x-cloak class="muted">⏳ warte auf Browser …</span>
+                  <span x-show="activeRunId &amp;&amp; scStatus==='kein-browser'" x-cloak class="muted">Kein Browser aktiv — startet beim ersten Browser-Schritt des Runs.</span>
+                  <span x-show="activeRunId &amp;&amp; scStatus==='live'" x-cloak class="sc-live">● live</span>
+                </div>
+                <canvas x-ref="scCanvas" class="scview-canvas" x-show="scStatus==='live'" x-cloak></canvas>
+              </div>
+              <div class="fl-resize" x-show="isFloating('browserview')" x-cloak @mousedown="floaterResizeDown('browserview', $event)"></div>
+            </div>
+
       </main>
     </div>
 
@@ -543,10 +608,19 @@
         </label>
         <label class="field">
           <span class="field-label">Default-Provider</span>
-          <select x-model="newProject.default_provider">
+          <select x-model="newProject.default_provider" @change="newProject.default_model = ''">
             <option value="">(global)</option>
             <template x-for="p in settings.providers" :key="p">
               <option :value="p" x-text="p"></option>
+            </template>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field-label">Default-Modell</span>
+          <select x-model="newProject.default_model">
+            <option value="" :selected="!newProject.default_model">(Provider-Standard)</option>
+            <template x-for="m in modelsFor(newProject.default_provider)" :key="m">
+              <option :value="m" :selected="m===newProject.default_model" x-text="m"></option>
             </template>
           </select>
         </label>

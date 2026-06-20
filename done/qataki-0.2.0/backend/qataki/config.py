@@ -17,6 +17,7 @@ _PROJECT_DEFAULTS = {
     "description": "",
     "artifacts_base": "~/.qataki",
     "default_provider": "",
+    "default_model": "",
 }
 _RUN_DEFAULTS = {
     "headless": True,

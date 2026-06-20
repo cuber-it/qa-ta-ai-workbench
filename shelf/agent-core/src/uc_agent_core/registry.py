@@ -73,7 +73,7 @@ _KEYWORDS: dict[str, str] = {
     "forward": "go_forward", "reload": "reload",
     # Lesen / Inhalt
     "title": "get_title", "text": "get_text", "texts": "get_all_texts",
-    "page_text": "get_page_content", "html": "get_html", "links": "get_links",
+    "content": "get_page_content", "html": "get_html", "links": "get_links",
     "attr": "get_attribute", "aria": "get_aria_snapshot",
     "console": "get_console_messages", "requests": "get_page_requests",
     # Finden / Beschreiben
@@ -126,7 +126,7 @@ _KW_OVERRIDES: dict[str, dict] = {
             "url": {"type": "string"},
             "wait_until": {"type": "string", "enum": ["domcontentloaded", "load", "networkidle"], "default": "load"}},
             "required": ["url"]}},
-    "page_text": {"fn": _pw.get_page_content, "desc": "Sichtbaren Textinhalt der Seite holen.",
+    "content": {"fn": _pw.get_page_content, "desc": "Sichtbaren Textinhalt der Seite holen.",
         "schema": {"type": "object", "properties": {"max_length": {"type": "integer", "default": 10000}}}},
     "text": {"fn": _pw.get_text, "desc": "Text eines Elements per CSS-Selektor.",
         "schema": {"type": "object", "properties": {"selector": {"type": "string"}}, "required": ["selector"]}},

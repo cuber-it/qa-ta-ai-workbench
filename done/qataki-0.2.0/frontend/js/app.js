@@ -20,6 +20,7 @@ const PW_KW = {
   "click_text": "click_text",
   "close_tab": "tab_close",
   "console": "console",
+  "content": "content",
   "cookies": "cookies",
   "count_is": "count_is",
   "creds": "creds",
@@ -65,7 +66,7 @@ const PW_KW = {
   "get_html": "html",
   "get_links": "links",
   "get_local_storage": "storage",
-  "get_page_content": "page_text",
+  "get_page_content": "content",
   "get_page_requests": "requests",
   "get_text": "text",
   "get_title": "title",
@@ -86,7 +87,6 @@ const PW_KW = {
   "navigate": "open",
   "new_tab": "tab_new",
   "open": "open",
-  "page_text": "page_text",
   "press": "press",
   "rec_actions": "rec_actions",
   "rec_start": "rec_start",
@@ -209,6 +209,13 @@ function app() {
     _histDraft: '',
     toolLog: [],
     artifacts: [],
+    // Run-Einstellungen-Floater
+    runForm: { title: '', url: '', provider: '', model: '', temperature: '', headless: true, description: '', artifacts_path: '' },
+    runCfgSaved: false,
+    budget: null,
+    // Browser-Ansicht (CDP-Screencast)
+    scStatus: '',     // '', 'warten', 'live', 'kein-browser'
+    _scES: null,
     allActivityCollapsed: false,
     agentStatus: '',
     agentCosts: null,
@@ -217,7 +224,7 @@ function app() {
     runs: [],
     activeRunId: '',
     newProjectOpen: false,
-    newProject: { name: '', base_url: '', description: '', artifacts_path: '', default_provider: '' },
+    newProject: { name: '', base_url: '', description: '', artifacts_path: '', default_provider: '', default_model: '' },
     artifactsBase: '~/.qataki',
     artifactsTouched: false,
     aboutOpen: false,
@@ -240,7 +247,10 @@ function app() {
     _CTX_BADGE: { default: 'Default', override: 'angepasst', custom: 'eigen' },
 
     // --- Floating-Kacheln (Default angedockt; loesbar, frei anordenbar) ---
-    floaters: {},        // id -> { floating, x, y, w, h, z }
+    floaters: {
+      runcfg:      { floating: true, x: 140, y: 110, w: 460, h: 520, z: 100 },
+      browserview: { floating: true, x: 200, y: 90,  w: 760, h: 540, z: 100 },
+    },
     // Raster-Platzierung je Kachel im 4x2-Grid. Dialog belegt eine ganze Spalte
     // (beide Zeilen), Quads je eine Zelle (Spalte c, Zeile r 1=oben/2=unten).
     slots: {
@@ -248,6 +258,8 @@ function app() {
       activity: { c: 2, r: 1 }, artifacts: { c: 2, r: 2 },
       context:  { c: 3, r: 1 }, run:       { c: 3, r: 2 },
       free1:    { c: 4, r: 1 }, log:       { c: 4, r: 2 },
+      runcfg:   { c: 4, r: 2 },
+      browserview: { c: 3, r: 1 },
     },
     _floatZ: 100,
     _drag: null,
@@ -267,8 +279,10 @@ function app() {
       { id: 'run',       title: 'Lauf' },
       { id: 'free1',     title: 'Frei 1' },
       { id: 'log',       title: 'Log & Verbrauch' },
+      { id: 'runcfg',    title: 'Run-Einstellungen' },
+      { id: 'browserview', title: 'Browser-Ansicht' },
     ],
-    panelsHidden: {},        // id -> true = ausgeblendet
+    panelsHidden: { runcfg: true, browserview: true },   // standardmaessig versteckt
     panelMenuOpen: false,
 
     init() {
@@ -276,6 +290,7 @@ function app() {
       this._onFloatUp = () => this._floatUp()
       this.loadSettings()
       this.loadConfig()
+      this.loadBudget()
       this.loadSkills()
       this.loadContext()
       this.loadModels()
@@ -432,8 +447,13 @@ function app() {
     },
     // Panel-Sichtbarkeit
     isVisible(id) { return !this.panelsHidden[id] },
-    togglePanel(id) { this.panelsHidden[id] = !this.panelsHidden[id]; this._saveUi() },
-    closePanel(id) { this.panelsHidden[id] = true; this._saveUi() },   // × auf der Kachel = ausblenden
+    togglePanel(id) {
+      this.panelsHidden[id] = !this.panelsHidden[id]
+      if (id === 'runcfg' && this.isVisible('runcfg')) this.syncRunForm()
+      if (id === 'browserview') { this.isVisible('browserview') ? this.connectScreencast() : this.disconnectScreencast() }
+      this._saveUi()
+    },
+    closePanel(id) { this.panelsHidden[id] = true; if (id === 'browserview') this.disconnectScreencast(); this._saveUi() },   // × auf der Kachel = ausblenden
 
     // ── Editor-Floater (CodeMirror) ──────────────────────────────────
     _edEnsureCM() {
@@ -1105,6 +1125,7 @@ function app() {
         description: d.description || '',
         artifacts_path: this.artifactsBase,
         default_provider: d.default_provider || '',
+        default_model: d.default_model || '',
       }
       this.newProjectOpen = true
     },
@@ -1150,7 +1171,7 @@ function app() {
       catch (e) { console.error('deleteProject', e) }
       await this.loadProjects()
       if (this.activeProject && this.activeProject.id === p.id) {
-        this.activeProject = null; this.runs = []; this.newRun()
+        this.activeProject = null; this.runs = []; this.clearRun()
         this._saveUi()
       }
     },
@@ -1183,6 +1204,72 @@ function app() {
       this.dialog = []; this.toolLog = []; this.artifacts = []
       this.agentCosts = null; this.agentStatus = ''
       this.promptHistory = []; this._histIdx = null; this._histDraft = ''
+      this.syncRunForm()
+      this.disconnectScreencast(); this.scStatus = ''
+    },
+
+    // ── Run-Einstellungen-Floater ────────────────────────────────────
+    activeRun() { return this.runs.find(x => x.id === this.activeRunId) || null },
+    syncRunForm() {
+      const r = this.activeRun()
+      this.runForm = r
+        ? { title: r.title || '', url: r.url || '', provider: r.provider || '', model: r.model || '',
+            temperature: r.temperature || '', headless: r.headless !== false,
+            description: r.description || '', artifacts_path: r.artifacts_path || '' }
+        : { title: '', url: '', provider: '', model: '', temperature: '', headless: true, description: '', artifacts_path: '' }
+    },
+    async saveRunCfg() {
+      if (!this.activeRunId) return
+      try {
+        const res = await fetch('/api/agent/sessions/' + encodeURIComponent(this.activeRunId) + '/edit', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(this.runForm),
+        })
+        if (res.ok) {
+          const run = this.runs.find(x => x.id === this.activeRunId)
+          if (run) Object.assign(run, this.runForm)
+          this.runCfgSaved = true
+          setTimeout(() => { this.runCfgSaved = false }, 1600)
+        }
+      } catch (e) { console.error('saveRunCfg', e) }
+    },
+    async loadBudget() {
+      try { const r = await fetch('/api/budget'); if (r.ok) this.budget = await r.json() }
+      catch (e) { console.error('budget', e) }
+    },
+
+    // ── Browser-Ansicht (CDP-Screencast über SSE) ────────────────────
+    connectScreencast() {
+      this.disconnectScreencast()
+      if (!this.activeRunId || !this.isVisible('browserview')) return
+      this.scStatus = 'warten'
+      const es = new EventSource('/api/agent/runs/' + encodeURIComponent(this.activeRunId) + '/screencast')
+      this._scES = es
+      es.onmessage = (e) => {
+        let m; try { m = JSON.parse(e.data) } catch (err) { return }
+        if (m.status) {
+          this.scStatus = m.status === 'live' ? 'live'
+                        : m.status === 'no-page' ? 'kein-browser' : 'warten'
+          return
+        }
+        if (m.frame) { this.scStatus = 'live'; this._drawFrame(m.frame) }
+      }
+      // bei Fehler reconnectet EventSource selbst; Status nicht hart auf Fehler setzen
+    },
+    disconnectScreencast() {
+      if (this._scES) { try { this._scES.close() } catch (e) {} this._scES = null }
+    },
+    _drawFrame(b64) {
+      const cv = this.$refs.scCanvas
+      if (!cv) return
+      const img = new Image()
+      img.onload = () => {
+        if (cv.width !== img.naturalWidth) cv.width = img.naturalWidth
+        if (cv.height !== img.naturalHeight) cv.height = img.naturalHeight
+        const ctx = cv.getContext('2d')
+        if (ctx) ctx.drawImage(img, 0, 0)
+      }
+      img.src = 'data:image/jpeg;base64,' + b64
     },
 
     toggleAllActivity() {
@@ -1202,7 +1289,7 @@ function app() {
         headless: this.configDefaults.run_defaults?.headless ?? true,
         description: '',
         artifacts_path: p.artifacts_path || '',
-        model: '',
+        model: p.default_model || '',
         temperature: '',
       }
       this.runModalOpen = true
@@ -1221,6 +1308,8 @@ function app() {
           this.clearRun()
           this.activeRunId = run.id
           await this.loadRuns()
+          this.syncRunForm()
+          this.connectScreencast()
           this._saveUi()
         }
       } catch (e) { console.error('createRun', e) }
@@ -1229,6 +1318,8 @@ function app() {
     async openRun(r) {
       this.clearRun()
       this.activeRunId = r.id
+      this.syncRunForm()
+      this.connectScreencast()
       this._saveUi()
       try {
         const res = await fetch('/api/agent/sessions/' + encodeURIComponent(r.id))
@@ -1263,6 +1354,11 @@ function app() {
       }
       if (ui.slots) this.slots = ui.slots
       if (ui.panelsHidden) this.panelsHidden = ui.panelsHidden
+      // runcfg: standardmaessig versteckt + schwebend, auch fuer Rueckkehrer ohne den Key
+      if (this.panelsHidden.runcfg === undefined) this.panelsHidden.runcfg = true
+      if (!this.floaters.runcfg) this.floaters.runcfg = { floating: true, x: 140, y: 110, w: 460, h: 520, z: 100 }
+      if (this.panelsHidden.browserview === undefined) this.panelsHidden.browserview = true
+      if (!this.floaters.browserview) this.floaters.browserview = { floating: true, x: 200, y: 90, w: 760, h: 540, z: 100 }
       if (ui.activeTab) this.activeTab = ui.activeTab
       if (ui.settingsOpen) this.settingsOpen = true
       if (!ui.projectId) return

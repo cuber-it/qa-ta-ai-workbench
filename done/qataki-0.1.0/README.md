@@ -60,4 +60,4 @@ branch you are looking at may already have wandered off somewhere else.
 
 ## License
 
-See [LICENSE](LICENSE).
+See [LICENSE](../../LICENSE) — GNU AGPL-3.0.

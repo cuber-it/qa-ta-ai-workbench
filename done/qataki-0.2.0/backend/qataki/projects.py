@@ -40,7 +40,7 @@ def list_projects() -> list[dict]:
 
 
 def create_project(name: str, base_url: str = "", description: str = "",
-                   artifacts_path: str = "", default_provider: str = "") -> dict:
+                   artifacts_path: str = "", default_provider: str = "", default_model: str = "") -> dict:
     d = _load_raw()
     pid = uuid.uuid4().hex
     meta = {
@@ -50,6 +50,7 @@ def create_project(name: str, base_url: str = "", description: str = "",
         "description": (description or "").strip(),
         "artifacts_path": (artifacts_path or "").strip(),
         "default_provider": (default_provider or "").strip(),
+        "default_model": (default_model or "").strip(),
     }
     d["projects"][pid] = meta
     _save_raw(d)

@@ -47,6 +47,17 @@ async def get(session_id: str, *, headless: bool, artifacts_path: str) -> ToolRe
         return e.reg
 
 
+def peek(session_id: str) -> ToolRegistry | None:
+    """Registry einer Session liefern, ohne sie zu erzeugen (fuer Zuschauer wie
+    den Screencast). Markiert aktiv, damit der Idle-Sweeper den Browser nicht
+    waehrend des Zuschauens schliesst."""
+    e = _pool.get(session_id)
+    if e is None:
+        return None
+    e.last_active = time.monotonic()
+    return e.reg
+
+
 async def close(session_id: str) -> bool:
     """Registry einer Session schliessen und entfernen. True, wenn vorhanden."""
     async with _lock:
